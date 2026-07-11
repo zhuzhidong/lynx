@@ -1,0 +1,13 @@
+# Copyright 2025 The Lynx Authors. All rights reserved.
+# Licensed under the Apache License Version 2.0 that can be found in the
+# LICENSE file in the root directory of this source tree.
+
+# FFRT C++ 接口为纯头文件（cpp/*.h 全是 inline 包装）。
+# @ppd/ffrt 在 base/platform/harmony/oh-package.json5 的 devDependencies 中声明，
+# 借助 ohpm 依赖传导把头文件拉进 oh_modules；运行时系统 libffrt.z.so 提供。
+#
+# 用法（base/src/BUILD.gn 的 is_harmony 段）：
+#   import("../platform/harmony/harmony.gni")
+#   include_dirs += [ ffrt_include_dir ]   # #include "ffrt/ffrt.h"
+#   libs += [ "ffrt.z" ]                   # 链系统核心 libffrt.z.so
+ffrt_include_dir = rebase_path("oh_modules/@ppd/ffrt/include")
