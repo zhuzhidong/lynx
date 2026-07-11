@@ -216,7 +216,7 @@ lynx_base_source_set("base_core") {
               "./fml/raster_thread_merger.cc",
               "./fml/shared_thread_merger.cc",
               "file_utils.cc",
-              "fml/concurrent_message_loop.cc",
+              "fml/concurrent_loop_backend_std.cc",
               "fml/cpu_affinity.cc",
               "fml/memory/task_runner_checker.cc",
               "fml/message_loop.cc",
