@@ -8,6 +8,10 @@ import("../../testing/test.gni")
 import("../include/base_public_headers.gni")
 import("base.gni")
 
+if (is_harmony) {
+  import("../platform/harmony/harmony.gni")
+}
+
 static_library("base_static") {
   sources = [
     "../platform/windows/lynx_base_env.cc",
