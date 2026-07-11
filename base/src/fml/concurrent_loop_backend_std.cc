@@ -35,10 +35,9 @@ constexpr uint32_t kWorkerMaxIdleMicroseconds = 34000;
 
 ConcurrentLoopBackendStd::ConcurrentLoopBackendStd(
     const std::string& name_prefix, Thread::ThreadPriority priority,
-    size_t worker_count) {
-  uint32_t max_worker_count =
-      std::max<uint32_t>(static_cast<uint32_t>(worker_count), 1u);
-  worker_count_(max_worker_count);
+    size_t worker_count)
+    : worker_count_(std::max<size_t>(worker_count, 1u)) {
+  const uint32_t max_worker_count = static_cast<uint32_t>(worker_count_);
   worker_count_atomic_.store(max_worker_count);
   workers_.reserve(max_worker_count);
   for (uint32_t i = 0; i < max_worker_count; ++i) {

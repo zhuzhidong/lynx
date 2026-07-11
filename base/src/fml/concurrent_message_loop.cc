@@ -2,20 +2,117 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 // Copyright 2022 The Lynx Authors. All rights reserved.
+// Copyright 2025 The Lynx Authors. All rights reserved.
 // Licensed under the Apache License Version 2.0 that can be found in the
 // LICENSE file in the root directory of this source tree.
 
-// TODO(fml): ConcurrentMessageLoop is being converted to a facade over the
-// ConcurrentLoopBackend abstraction (see base/docs/concurrent_loop_backend_*).
-// The previous std::thread-pool implementation has been ported to
-// base/src/fml/concurrent_loop_backend_std.cc. This translation unit is
-// intentionally a no-op stub for now; the facade wiring will be added in
-// Task 5 of the plan. Keep the copyright headers above and the namespace
-// below intact so downstream translation units that include this header
-// (directly or transitively) continue to link cleanly during the migration.
+#include "base/include/fml/concurrent_message_loop.h"
+
+#include <algorithm>
+#include <utility>
+
+#include "base/include/fml/concurrent_message_loop_backend.h"
 
 namespace lynx {
 namespace fml {
-// Placeholder. Implementation lives in concurrent_loop_backend_std.cc.
+
+std::shared_ptr<ConcurrentMessageLoop> ConcurrentMessageLoop::Create(
+    size_t worker_count) {
+  return std::shared_ptr<ConcurrentMessageLoop>{new ConcurrentMessageLoop(
+      "io.worker.", Thread::ThreadPriority::NORMAL, worker_count)};
+}
+
+std::shared_ptr<ConcurrentMessageLoop> ConcurrentMessageLoop::Create(
+    const Thread::ThreadConfigSetter& setter, size_t worker_count) {
+  return std::shared_ptr<ConcurrentMessageLoop>{new ConcurrentMessageLoop(
+      "io.worker.", setter, Thread::ThreadPriority::NORMAL, worker_count)};
+}
+
+ConcurrentMessageLoop::ConcurrentMessageLoop(const std::string& name_prefix,
+                                             Thread::ThreadPriority priority,
+                                             size_t worker_count)
+    : ConcurrentMessageLoop(name_prefix,
+#if defined(OS_IOS) || defined(OS_ANDROID)
+                            PlatformThreadPriority::Setter,
+#else
+                            Thread::SetCurrentThreadName,
+#endif
+                            priority, worker_count) {
+}
+
+ConcurrentMessageLoop::ConcurrentMessageLoop(
+    const std::string& name_prefix, const Thread::ThreadConfigSetter& setter,
+    Thread::ThreadPriority priority, size_t worker_count)
+    : backend_(CreateConcurrentLoopBackend(name_prefix, priority,
+                                           std::max<size_t>(worker_count, 1u))),
+      shutdown_(false) {
+  // setter is accepted for source compatibility with the previous
+  // implementation (which applied it via the per-worker setup_thread closure).
+  // The current BackendStd ports the iOS/Android setter selection directly
+  // (see concurrent_loop_backend_std.cc), and future backends (FFRT/GCD)
+  // will own their own thread configuration, so the setter is intentionally
+  // not propagated further.
+  (void)setter;
+}
+
+ConcurrentMessageLoop::~ConcurrentMessageLoop() {
+  // The backend's destructor handles worker thread join. Terminate() is
+  // called explicitly to flip the facade-level shutdown_ flag and let the
+  // backend drain its queue.
+  Terminate();
+}
+
+void ConcurrentMessageLoop::PostTask(base::closure task) {
+  if (!task) {
+    return;
+  }
+
+  // C2 fallback: after shutdown, run the task synchronously on the
+  // caller's thread rather than dropping it on the floor. This matches
+  // the behavior of the previous in-place implementation.
+  if (shutdown_.load()) {
+    task();
+    return;
+  }
+
+  backend_->PostTask(std::move(task));
+}
+
+bool ConcurrentMessageLoop::RunsTasksOnCurrentThreadWorker() const {
+  return backend_->RunsTasksOnCurrentThreadWorker();
+}
+
+size_t ConcurrentMessageLoop::GetWorkerCount() const {
+  return backend_->GetWorkerCount();
+}
+
+std::shared_ptr<ConcurrentTaskRunner> ConcurrentMessageLoop::GetTaskRunner() {
+  return std::make_shared<ConcurrentTaskRunner>(weak_from_this());
+}
+
+void ConcurrentMessageLoop::Terminate() {
+  shutdown_.store(true);
+  backend_->Terminate();
+}
+
+ConcurrentTaskRunner::ConcurrentTaskRunner(
+    std::weak_ptr<ConcurrentMessageLoop> weak_loop)
+    : weak_loop_(std::move(weak_loop)) {}
+
+ConcurrentTaskRunner::~ConcurrentTaskRunner() = default;
+
+void ConcurrentTaskRunner::PostTask(lynx::base::closure task) {
+  if (!task) {
+    return;
+  }
+
+  if (auto loop = weak_loop_.lock()) {
+    loop->PostTask(std::move(task));
+    return;
+  }
+
+  task();
+}
+
 }  // namespace fml
 }  // namespace lynx
