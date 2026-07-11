@@ -363,33 +363,58 @@ ffrt_include_dir = rebase_path("oh_modules/@ppd/ffrt/include")
 
 > 写法约束：gni 必须**相对声明方模块自身的 `oh_modules/`**（已是软链接），**不直接写绝对路径**，也**不写 explorer store 内部路径**（`.ohpm/<pkg>+<ver>/...`，版本号写死会随升级断裂）。
 
-### 12.4 `base/src/BUILD.gn` 接线
+### 12.4 `base/src/BUILD.gn` + `base/src/base.gni` 接线
 
-`is_harmony` 的 `fml` 段（约第 261 行，`message_loop_harmony.cc` 那块附近）改为：
+接线分两处，目的是把 "FFRT 头 + 链接库" 集中到 `base/src/base.gni` 的模板里，所有用 `lynx_base_source_set` 的 source_set 自动继承，**调用方 BUILD.gn 只需 import + 加 source**。
+
+**A. `base/src/BUILD.gn`（顶层 import + source 列表）**——`base/src/BUILD.gn` 顶层加条件 import，并把 `concurrent_loop_backend_ffrt.cc` 加进 `is_harmony` 段的 `fml` 源列表：
 
 ```gn
+# 顶层（gating by is_harmony）
+if (is_harmony) {
+  import("../platform/harmony/harmony.gni")
+}
+
+# is_harmony 的 fml 段（约第 267 行）
 } else if (is_harmony) {
   sources += [
     "fml/platform/harmony/message_loop_harmony.cc",
-    "fml/platform/harmony/concurrent_loop_backend_ffrt.cc",   // ← 新增
+    "fml/platform/harmony/concurrent_loop_backend_ffrt.cc",   # ← 本期新增
     "fml/platform/linux/timerfd.cc",
     "fml/platform/posix/thread_name_setter_posix.cc",
     "fml/synchronization/shared_mutex_std.cc",
     "platform/harmony/harmony_vsync_manager.cc",
     "platform/harmony/napi_util.cc",
   ]
-  // 已存在的 platform/harmony 根模块（如果需要 import）保持原状
 }
 ```
 
-如果整体 BUILD.gn 没有统一 import 鸿蒙 gni，则在 `fml` source_set 内追加：
+**B. `base/src/base.gni`（`lynx_base_source_set` 模板的鸿蒙段）**——把 FFRT 头目录 + 库放进模板，所有 source_set 复用此模板时自动生效，集中避免每个 source_set 重复声明：
 
 ```gn
-import("../platform/harmony/harmony.gni")   # 把 ffrt_include_dir 注入作用域
-include_dirs += [ ffrt_include_dir ]
-libs += [ "ffrt.z" ]                        # 系统 libffrt.z.so，按名链
+template("lynx_base_source_set") {
+  source_set(target_name) {
+    # ... 省略通用初始化 ...
+    if (!defined(include_dirs)) {
+      include_dirs = []
+    }
+    # ... 省略 ...
+    if (is_android) {
+      libs += [ "log" ]
+    }
+    if (is_harmony) {
+      include_dirs += [ ffrt_include_dir ]   # 来自 ../platform/harmony/harmony.gni
+      libs += [ "ffrt.z" ]                   # 鸿蒙系统核心 libffrt.z.so，按名链
+    }
+    # ... 省略 ...
+  }
+}
 ```
 
+> **为何这样拆**：所有 source_set（fml / base_trace / base_log 等）都走 `lynx_base_source_set` 模板，把 `is_harmony` 的 include/库集中进模板可在任何未来 source_set 直接享用 FFRT 头，无需重复声明。`is_harmony` 时模板里 `include_dirs` 必须先 `= []`（默认值），否则 `+=` 会报"未定义变量"。
+>
+> 如果某 source_set 不走 `lynx_base_source_set` 而直接写 `source_set(...)`，则需要在自己 source_set 内重复 `include_dirs += [ ffrt_include_dir ]` + `libs += [ "ffrt.z" ]`，并自行 import `../platform/harmony/harmony.gni`。
+>
 > `messages_loop_harmony.cc` 本身可能也需要 `platform/harmony/harmony.gni` 的 `primjs_native_lib_dir` / `imageknife_*` 等变量——保持已有的 import 与消费方式，按各 BUILD.gn 实际位置补 import。
 
 ### 12.5 FFRT C++ 头与运行时核心
@@ -409,12 +434,22 @@ libs += [ "ffrt.z" ]                        # 系统 libffrt.z.so，按名链
 
 **不**通过 `#include "ffrt/cpp/queue.h"` 的相对路径或其他奇怪前缀；include 基准是 `oh_modules/@ppd/ffrt/include`，`ffrt/` 是该目录下的一级目录。
 
-### 12.6 编译开关
+### 12.6 编译开关（文件级）
 
-按平台宏在工厂函数里选后端（factory 完整代码见 §5）。
+按平台宏在工厂函数里选后端（factory 完整代码见 §5）。**文件层级 if** 把鸿蒙专属头/源单独围起，确保非鸿蒙平台零引入：
 
-- **OHOS API 基线**：BackendFFRT 用 `thread_mode(true)`，需要 OHOS API ≥ 20。假定 Lynx 鸿蒙目标机器 ≥ HarmonyOS 6.0，该条件默认满足；若未来需支持老机型，再补 fallback 适配。
-- **可选回退开关 `LYNX_CONCURRENT_LOOP_BACKEND_FFRT`**：默认开（满足 API 基线 + 平台宏即选 FFRT）。可在 factory 的 `OS_HARMONY` 分支前加 `#if !defined(LYNX_CONCURRENT_LOOP_BACKEND_FFRT)` 强行回退 `BackendStd`，便于线上快速兜底。
+| 文件                                                                | 围栏                                                               | 作用                                                       |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------- |
+| `base/src/fml/concurrent_message_loop_backend.cc`                   | `#if defined(OS_HARMONY)` 引入 ffrt 后端 header                    | 工厂分发，跨平台                                           |
+| `base/src/fml/platform/harmony/concurrent_loop_backend_ffrt.{h,cc}` | 始终编译（仅被 `#if OS_HARMONY` 工厂引用 + is_harmony BUILD 收录） | FFRT 后端实现                                              |
+| `base/src/fml/concurrent_message_loop_backend_std.{h,cc}`           | 默认全平台                                                         | std 后端（其他平台行为零变化）                             |
+| `base/platform/harmony/oh-package.json5`                            | 仅 `@lynx/lynx_base` 模块生效                                      | `devDependencies` 声明 `@ppd/ffrt` 1.1.8                   |
+| `base/platform/harmony/harmony.gni`                                 | 在 `is_harmony` 编译段生效                                         | 暴露 `ffrt_include_dir` 给 base BUILD                      |
+| `base/src/BUILD.gn` 的 `if (is_harmony)`                            | 顶层条件 import                                                    | 把 harmony.gni 的 `ffrt_include_dir` 注入作用域            |
+| `base/src/base.gni` 模板的 `if (is_harmony)`                        | 模板内条件                                                         | 给所有走模板的 source_set 加 `ffrt_include_dir` + `ffrt.z` |
+
+- **OHOS API 基线**：BackendFFRT 用 `thread_mode(true)`，需要 OHOS API ≥ 20。假定 Lynx 鸿蒙目标机器 ≥ HarmonyOS 6.0，该条件默认满足；若未来需支持老机型，再补 fallback 适配（届时要么补 `thread_mode(false)` 路径，要么在 wrapper 内把哨兵改成「类级别 + 非线程独占」的等价机制）。
+- **未实现的「可选回退开关 `LYNX_CONCURRENT_LOOP_BACKEND_FFRT`」**：本轮**未**在工厂加 `#if !defined(LYNX_CONCURRENT_LOOP_BACKEND_FFRT)` 包一层回退。需要时是单行编辑：把工厂的 `OS_HARMONY` 分支前加 `#if !defined(LYNX_CONCURRENT_LOOP_BACKEND_FFRT) // 用 BackendStd else // 用 BackendFFRT`。当前 `concurrent_message_loop_backend_ffrt.cc` 仍会被 is_harmony 段编入，需要回退时同时把它从 `sources` 里挪走——因此真正"灰度"目前靠构建配置整体切换，不靠宏门。
 
 ## 13. 测试策略
 
@@ -430,7 +465,8 @@ libs += [ "ffrt.z" ]                        # 系统 libffrt.z.so，按名链
 
 ## 14. 灰度与回滚
 
-- 编译期开关 `LYNX_CONCURRENT_LOOP_BACKEND_FFRT`：Harmony 默认开，问题时可关 → 回退 `BackendStd`。
+- **当前实现无 `LYNX_CONCURRENT_LOOP_BACKEND_FFRT` 宏门**：本期没在工厂加可选回退开关。Harmony 上跑 FFRT，出现问题时的临时回退路径是「按构建配置整体切回不带 FFRT 的版本」（如关闭 `is_harmony` 的 `concurrent_loop_backend_ffrt.cc` source，把工厂的 OS_HARMONY 分支临时映射到 `BackendStd`）。
+- 若日后真需要按调用方 / 包级细粒度回退：在工厂前加 `LYNX_CONCURRENT_LOOP_BACKEND_FFRT` 门 + 在 `base/src/BUILD.gn` 的 is_harmony 段把 `concurrent_loop_backend_ffrt.cc` 一起挪走，是单 commit 的清理动作。
 - 因后端是编译期选择，无运行时双跑；灰度 = 按版本 / 按构建配置切换。
 - 上线前在 Harmony 真机跑完整图像/字体/资源路径回归。
 
