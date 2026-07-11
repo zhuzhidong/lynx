@@ -267,6 +267,7 @@ lynx_base_source_set("base_core") {
   } else if (is_harmony) {
     sources += [
       "fml/platform/harmony/message_loop_harmony.cc",
+      "fml/platform/harmony/concurrent_loop_backend_ffrt.cc",
       "fml/platform/linux/timerfd.cc",
       "fml/platform/posix/thread_name_setter_posix.cc",
       "fml/synchronization/shared_mutex_std.cc",
