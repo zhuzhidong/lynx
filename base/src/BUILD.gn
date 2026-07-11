@@ -322,6 +322,17 @@ lynx_base_source_set("base_core") {
 }
 
 if (enable_unittests) {
+  unittest_exec("concurrent_message_loop_backend_test") {
+    sources = [
+      "fml/concurrent_message_loop_backend_test.cc",
+    ]
+    deps = [
+      ":base_core",
+      ":base_log",
+      ":base_values",
+    ]
+  }
+
   unittest_exec("base_unittests_exec") {
     testonly = true
     sources = [
@@ -386,6 +397,7 @@ if (enable_unittests) {
       ":base_core",
       ":base_log",
       ":base_values",
+      ":concurrent_message_loop_backend_test",
       "//third_party/googletest:gtest",
     ]
   }
