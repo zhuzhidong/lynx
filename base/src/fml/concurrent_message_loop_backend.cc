@@ -23,19 +23,19 @@ namespace fml {
 
 std::unique_ptr<ConcurrentLoopBackend> CreateConcurrentLoopBackend(
     const std::string& name_prefix, Thread::ThreadPriority priority,
-    size_t worker_count) {
+    size_t worker_count, Thread::ThreadConfigSetter setter) {
 #if defined(OS_HARMONY)
   // Placeholder until BackendFFRT lands (Task 9). Falls back to std pool so
   // Harmony builds keep linking during Phase 1.
-  return std::make_unique<ConcurrentLoopBackendStd>(name_prefix, priority,
-                                                   worker_count);
+  return std::make_unique<ConcurrentLoopBackendStd>(
+      name_prefix, priority, worker_count, std::move(setter));
 #elif defined(OS_IOS) || defined(OS_OSX)
   // Placeholder until BackendGCD lands.
-  return std::make_unique<ConcurrentLoopBackendStd>(name_prefix, priority,
-                                                   worker_count);
+  return std::make_unique<ConcurrentLoopBackendStd>(
+      name_prefix, priority, worker_count, std::move(setter));
 #else
-  return std::make_unique<ConcurrentLoopBackendStd>(name_prefix, priority,
-                                                   worker_count);
+  return std::make_unique<ConcurrentLoopBackendStd>(
+      name_prefix, priority, worker_count, std::move(setter));
 #endif
 }
 

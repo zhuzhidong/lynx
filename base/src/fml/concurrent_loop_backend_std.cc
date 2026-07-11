@@ -35,8 +35,9 @@ constexpr uint32_t kWorkerMaxIdleMicroseconds = 34000;
 
 ConcurrentLoopBackendStd::ConcurrentLoopBackendStd(
     const std::string& name_prefix, Thread::ThreadPriority priority,
-    size_t worker_count)
-    : worker_count_(std::max<size_t>(worker_count, 1u)) {
+    size_t worker_count, Thread::ThreadConfigSetter setter)
+    : worker_count_(std::max<size_t>(worker_count, 1u)),
+      setter_(std::move(setter)) {
   const uint32_t max_worker_count = static_cast<uint32_t>(worker_count_);
   worker_count_atomic_.store(max_worker_count);
   workers_.reserve(max_worker_count);
@@ -44,11 +45,15 @@ ConcurrentLoopBackendStd::ConcurrentLoopBackendStd(
     base::closure setup_thread = [name_prefix, i, priority, this]() {
       const auto config = fml::Thread::ThreadConfig(
           std::string{name_prefix + std::to_string(i + 1)}, priority);
+      if (setter_) {
+        setter_(config);
+      } else {
 #if defined(OS_IOS) || defined(OS_ANDROID)
-      PlatformThreadPriority::Setter(config);
+        PlatformThreadPriority::Setter(config);
 #else
-      Thread::SetCurrentThreadName(config);
+        Thread::SetCurrentThreadName(config);
 #endif
+      }
       WorkerMain(i);
     };
     workers_.emplace_back(std::move(setup_thread));

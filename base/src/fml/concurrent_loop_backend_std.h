@@ -28,7 +28,8 @@ class ConcurrentLoopBackendStd final : public ConcurrentLoopBackend {
  public:
   ConcurrentLoopBackendStd(const std::string& name_prefix,
                            Thread::ThreadPriority priority,
-                           size_t worker_count);
+                           size_t worker_count,
+                           Thread::ThreadConfigSetter setter);
   ~ConcurrentLoopBackendStd() override;
 
   void PostTask(base::closure task) override;
@@ -41,6 +42,7 @@ class ConcurrentLoopBackendStd final : public ConcurrentLoopBackend {
 
   std::vector<std::thread> workers_;
   const size_t worker_count_;
+  const Thread::ThreadConfigSetter setter_;
   std::atomic<uint32_t> worker_count_atomic_{0};
   std::mutex tasks_mutex_;
   std::queue<base::closure> tasks_;

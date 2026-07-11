@@ -32,10 +32,14 @@ class ConcurrentLoopBackend {
 };
 
 // 编译期工厂：按平台宏选后端。priority/worker_count 由 facade 构造时传入。
+// `setter` 是 per-worker-thread 的线程配置回调（设置名称/优先级等）。
+// 传 nullptr 表示使用平台默认选择（iOS/Android: PlatformThreadPriority::Setter;
+// 其余: Thread::SetCurrentThreadName），保留未提供 setter 时的历史行为。
 BASE_EXPORT std::unique_ptr<ConcurrentLoopBackend> CreateConcurrentLoopBackend(
     const std::string& name_prefix,
     Thread::ThreadPriority priority,
-    size_t worker_count);
+    size_t worker_count,
+    Thread::ThreadConfigSetter setter = nullptr);
 
 }  // namespace fml
 }  // namespace lynx

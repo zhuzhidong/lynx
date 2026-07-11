@@ -31,12 +31,7 @@ std::shared_ptr<ConcurrentMessageLoop> ConcurrentMessageLoop::Create(
 ConcurrentMessageLoop::ConcurrentMessageLoop(const std::string& name_prefix,
                                              Thread::ThreadPriority priority,
                                              size_t worker_count)
-    : ConcurrentMessageLoop(name_prefix,
-#if defined(OS_IOS) || defined(OS_ANDROID)
-                            PlatformThreadPriority::Setter,
-#else
-                            Thread::SetCurrentThreadName,
-#endif
+    : ConcurrentMessageLoop(name_prefix, Thread::ThreadConfigSetter{},
                             priority, worker_count) {
 }
 
@@ -44,15 +39,9 @@ ConcurrentMessageLoop::ConcurrentMessageLoop(
     const std::string& name_prefix, const Thread::ThreadConfigSetter& setter,
     Thread::ThreadPriority priority, size_t worker_count)
     : backend_(CreateConcurrentLoopBackend(name_prefix, priority,
-                                           std::max<size_t>(worker_count, 1u))),
+                                           std::max<size_t>(worker_count, 1u),
+                                           setter)),
       shutdown_(false) {
-  // setter is accepted for source compatibility with the previous
-  // implementation (which applied it via the per-worker setup_thread closure).
-  // The current BackendStd ports the iOS/Android setter selection directly
-  // (see concurrent_loop_backend_std.cc), and future backends (FFRT/GCD)
-  // will own their own thread configuration, so the setter is intentionally
-  // not propagated further.
-  (void)setter;
 }
 
 ConcurrentMessageLoop::~ConcurrentMessageLoop() {
