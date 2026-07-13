@@ -4,6 +4,10 @@
 
 #include "base/include/fml/concurrent_message_loop.h"
 #include "base/include/fml/concurrent_message_loop_backend.h"
+#include "base/src/fml/concurrent_loop_backend_std.h"
+#if defined(OS_HARMONY)
+#include "base/src/fml/platform/harmony/concurrent_loop_backend_ffrt.h"
+#endif
 #include "gtest/gtest.h"
 
 #include <atomic>
@@ -88,6 +92,32 @@ TEST(ConcurrentMessageLoopShutdownFallback,
   EXPECT_EQ(ran_on_id.load(), caller_id);
   EXPECT_FALSE(loop->RunsTasksOnCurrentThreadWorker());
 }
+
+// Regression: PostTask after Terminate must run synchronously on the
+// caller's thread (not crash, not enqueue into a destroyed backend).
+// The facade-level test above covers the facade's shutdown_ fallback;
+// this exercises the backend's own contract.
+TEST(ConcurrentLoopBackendStdTest, PostTaskAfterTerminateRunsSync) {
+  auto backend = std::make_unique<ConcurrentLoopBackendStd>(
+      "post-term-std", Thread::ThreadPriority::NORMAL, 1);
+  backend->Terminate();
+
+  std::atomic<bool> ran{false};
+  backend->PostTask([&] { ran.store(true); });
+  EXPECT_TRUE(ran.load());
+}
+
+#if defined(OS_HARMONY)
+TEST(ConcurrentLoopBackendFFRTTest, PostTaskAfterTerminateRunsSync) {
+  auto backend = std::make_unique<ConcurrentLoopBackendFFRT>(
+      "post-term-ffrt", Thread::ThreadPriority::NORMAL, 1);
+  backend->Terminate();
+
+  std::atomic<bool> ran{false};
+  backend->PostTask([&] { ran.store(true); });
+  EXPECT_TRUE(ran.load());
+}
+#endif
 
 }  // namespace
 }  // namespace fml
