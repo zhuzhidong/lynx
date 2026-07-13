@@ -54,10 +54,6 @@ template("lynx_base_source_set") {
     if (is_android) {
       libs += [ "log" ]
     }
-    if (is_harmony) {
-      include_dirs += [ ffrt_include_dir ]
-      libs += [ "ffrt.z" ]
-    }
     configs += base_configs
     public_configs += base_public_configs
     if (is_apple) {

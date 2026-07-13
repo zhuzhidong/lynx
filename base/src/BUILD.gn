@@ -313,11 +313,19 @@ lynx_base_source_set("base_core") {
     ]
   }
 
+  include_dirs = []
+  if (is_harmony) {
+    include_dirs += [ ffrt_include_dir ]
+  }
+
   deps = [ ":datauri_utils" ]
 
   libs = []
   if (is_android) {
     libs += [ "android" ]
+  }
+  if (is_harmony) {
+    libs += [ "ffrt.z" ]
   }
   if (is_win) {
     libs += [ "user32.lib" ]
