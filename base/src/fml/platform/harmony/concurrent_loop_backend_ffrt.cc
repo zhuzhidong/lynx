@@ -74,10 +74,8 @@ bool ConcurrentLoopBackendFFRT::RunsTasksOnCurrentThreadWorker() const {
 }
 
 void ConcurrentLoopBackendFFRT::Terminate() {
-  // Set the flag first so PostTask falls back to sync execution, then
-  // destroy the queue (blocks until in-flight tasks finish).
+  // Non-blocking. The FFRT queue destruction is deferred to the destructor.
   terminated_.store(true);
-  queue_.reset();
 }
 
 }  // namespace fml
