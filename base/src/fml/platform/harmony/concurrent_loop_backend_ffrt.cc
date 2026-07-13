@@ -4,43 +4,27 @@
 
 #include "base/src/fml/platform/harmony/concurrent_loop_backend_ffrt.h"
 
+#include <memory>
 #include <utility>
 
+// The @ppd/ffrt C++ wrappers transitively include job_ring.h, which has
+// an unused variable (us) that triggers -Werror. Suppress just that warning
+// around the third-party include; our own code keeps full warnings.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-variable"
 #include "ffrt/ffrt.h"  // @ppd/ffrt 1.1.8 — C++ wrappers (header-only)
+#pragma GCC diagnostic pop
 
 namespace lynx {
 namespace fml {
 
-thread_local ConcurrentLoopBackendFFRT*
-    ConcurrentLoopBackendFFRT::g_current_worker = nullptr;
-
-ConcurrentLoopBackendFFRT::ConcurrentLoopBackendFFRT(
-    const std::string& name_prefix, Thread::ThreadPriority priority,
-    size_t worker_count, Thread::ThreadConfigSetter setter)
-    : worker_count_(worker_count), setter_(std::move(setter)) {
-  // queue_attr chain: max_concurrency → qos → thread_mode.
-  // thread_mode(true) makes each FFRT task run on its own OS thread so
-  // the per-task thread_local (g_current_worker) is observable.
-  auto attr = ffrt::queue_attr()
-                  .max_concurrency(static_cast<int>(worker_count))
-                  .qos(MapQos(priority))
-                  .thread_mode(true);
-
-  queue_ = std::make_unique<ffrt::queue>(ffrt::queue_concurrent,
-                                         name_prefix.c_str(), attr);
-}
-
-ConcurrentLoopBackendFFRT::~ConcurrentLoopBackendFFRT() = default;
-
-// static
-ffrt::qos ConcurrentLoopBackendFFRT::MapQos(Thread::ThreadPriority p) {
+namespace {
+// HIGH → qos_user_initiated (the highest user-initiated QoS class in
+// this FFRT SDK; the C++ enum mirrors the C ffrt_qos_user_initiated).
+ffrt::qos MapQos(Thread::ThreadPriority p) {
   switch (p) {
-    // HIGH → qos_user_interactive ("UI 响应" 档). The enum header annotates
-    // it as @since 23, but the FFRT C interface does not validate the enum
-    // value against the API level, so the integer value 5 is usable on
-    // all targets (Harmony 6.0+ runtime).
     case Thread::ThreadPriority::HIGH:
-      return ffrt::qos_user_interactive;
+      return ffrt::qos_user_initiated;
     case Thread::ThreadPriority::LOW:
     case Thread::ThreadPriority::BACKGROUND:
       return ffrt::qos_background;
@@ -49,14 +33,42 @@ ffrt::qos ConcurrentLoopBackendFFRT::MapQos(Thread::ThreadPriority p) {
       return ffrt::qos_default;
   }
 }
+}  // namespace
+
+thread_local ConcurrentLoopBackendFFRT*
+    ConcurrentLoopBackendFFRT::g_current_worker = nullptr;
+
+ConcurrentLoopBackendFFRT::ConcurrentLoopBackendFFRT(
+    const std::string& name_prefix, Thread::ThreadPriority priority,
+    size_t worker_count, Thread::ThreadConfigSetter setter)
+    : worker_count_(worker_count), setter_(std::move(setter)) {
+  // queue_attr chain: max_concurrency → qos → thread_mode. thread_mode(true)
+  // makes each FFRT task run on its own OS thread so the per-task
+  // thread_local (g_current_worker) is observable. The chain result is
+  // bound directly to ffrt::queue's const queue_attr& parameter — storing
+  // it in a local would require a copy (queue_attr deletes its copy ctor).
+  queue_ = std::make_unique<ffrt::queue>(
+      ffrt::queue_concurrent,
+      name_prefix.c_str(),
+      ffrt::queue_attr()
+          .max_concurrency(static_cast<int>(worker_count))
+          .qos(MapQos(priority))
+          .thread_mode(true));
+}
+
+ConcurrentLoopBackendFFRT::~ConcurrentLoopBackendFFRT() = default;
 
 void ConcurrentLoopBackendFFRT::PostTask(base::closure task) {
+  // Wrap the MoveOnly closure in a shared_ptr so the lambda capturing it
+  // is CopyConstructible. ffrt::queue::submit wraps the callable in a
+  // std::function internally, which requires the callable to be copyable.
+  auto shared_task = std::make_shared<base::closure>(std::move(task));
   // Set task-level sentinel around the user closure. The ffrt::queue
   // thread_mode(true) ensures this lambda runs on a single OS thread,
   // so the thread_local is reliably observable.
-  auto wrapped = [this, t = std::move(task)]() mutable {
+  auto wrapped = [this, shared_task]() {
     g_current_worker = this;
-    t();
+    (*shared_task)();
     g_current_worker = nullptr;
   };
   // ffrt::queue::submit takes std::function&& and converts internally
