@@ -308,8 +308,7 @@ class FakeBackend : public ConcurrentLoopBackend {
 };
 thread_local ConcurrentLoopBackend* FakeBackend::g_current = nullptr;
 
-TEST(ConcurrentLoopBackendContract, C1TaskIsExecuted) {
-  // C1: 非 shutdown 期 PostTask 必最终执行
+TEST(ConcurrentLoopBackendTest, PostTaskExecutesTaskExactlyOnce) {
   auto backend = std::make_unique<FakeBackend>(2);
   std::atomic<int> count{0};
   backend->PostTask([&] { count.fetch_add(1); });
@@ -317,8 +316,7 @@ TEST(ConcurrentLoopBackendContract, C1TaskIsExecuted) {
   EXPECT_EQ(count.load(), 1);
 }
 
-TEST(ConcurrentLoopBackendContract, C3WorkerSelfIdentifiesInsideTask) {
-  // C3: 任务执行期间 RunsTasksOnCurrentThreadWorker() == true，非任务上下文 == false
+TEST(ConcurrentLoopBackendTest, RunsTasksOnCurrentThreadWorkerInsideTask) {
   auto backend = std::make_unique<FakeBackend>(1);
   std::atomic<bool> inside{false};
   std::atomic<bool> flag_inside{false};
@@ -596,11 +594,11 @@ git commit -m "[Refactor][FML] convert ConcurrentMessageLoop into facade over ba
 
 - Modify: `base/src/fml/concurrent_message_loop_backend_test.cc`
 
-- [ ] **Step 6.1**：加 C2 测试（shutdown 后 PostTask 同步在 caller 线程跑）：
+- [ ] **Step 6.1**：加 shutdown fallback 测试（PostTask 在 caller 线程同步执行）：
 
 ```cpp
-// 在 ConcurrentLoopBackendContract 测试套件里追加：
-TEST(ConcurrentLoopBackendFacadeContract, C2ShutdownFallbackRunsOnCaller) {
+TEST(ConcurrentMessageLoopShutdownFallback,
+     PostTaskRunsSynchronouslyOnCallerAfterShutdown) {
   // 这测试的是 facade 的 shutdown 兜底：用任一 backend（这里用 FakeBackend）
   // 验证 ConcurrentMessageLoop::PostTask 在 shutdown_ 被设后不委派给 backend，
   // 而是在调用线程同步执行 task。
@@ -698,6 +696,17 @@ git status  # 看一下有没有遗落
 ---
 
 ## Phase 2：Harmony FFRT 后端
+
+> **📝 实施注记（实现完成后回填）**
+>
+> Phase 2 实施过程中对原始方案做了 4 处偏离，以下列出。代码块保留原写法作为决策记录；**与现网一致的最终写法见 [`concurrent_loop_backend_spec.md`](./concurrent_loop_backend_spec.md) §FFRT 后端**。
+>
+> 1. **`qos_user_interactive` → `qos_user_initiated`**：实现阶段确认 SDK 文档的"UI 响应"档实际对应 `qos_user_initiated`，`qos_user_interactive` 才是 @since 23 才有的实验档。为稳妥起见改用前者（与 NORMAL 仍差 2 档）。
+> 2. **`MapQos` 从 `static` 成员移到匿名 namespace**：类内静态成员会暴露在头文件公共符号表，没必要；挪到 `.cc` 的匿名 namespace 保持 TU-local。
+> 3. **`auto attr = ...; queue_(attr)` → 直接链式 bind 进 `ffrt::queue` 构造**：`ffrt::queue_attr` 的 copy ctor 被删，存到局部变量必然编译失败。
+> 4. **PostTask lambda 从 `[this, t = move(task)]() mutable { t(); }` 改为 `make_shared<closure>` 包装**：`ffrt::queue::submit` 内部把 callable 转 `std::function`，要求 CopyConstructible；`base::closure` 是 move-only，必须包一层 `shared_ptr`。
+>
+> 以上 4 点对应提交 `1c9cac6f7 [FML][Harmony] fix ffrt backend compile (lambda, qos, third-party warning)`。
 
 ### Task 8：BackendFFRT 头文件
 

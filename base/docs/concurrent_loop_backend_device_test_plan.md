@@ -69,7 +69,7 @@
 1. Run the HAP on the device/emulator. The demo loads a Lynx page that
    exercises both task pools:
    - `TaskRunnerManufactor::GetConcurrentTaskRunner("LynxHighTask")` →
-     `ThreadPriority::HIGH` → `BackendFFRT` → `qos_user_interactive`.
+     `ThreadPriority::HIGH` → `BackendFFRT` → `qos_user_initiated`.
    - `TaskRunnerManufactor::GetConcurrentTaskRunner("LynxNormalTask")` →
      `ThreadPriority::NORMAL` → `BackendFFRT` → `qos_default`.
 2. Trigger the demo's image-decode / first-paint path so both queues get
@@ -96,7 +96,7 @@
       `thread_mode(true)`, the FFRT queue does not multiplex tasks onto a
       fixed worker pool — it spawns a fresh thread per task.
 - [ ] Sanity counter-check: temporarily flip
-      `concurrent_loop_backend_ffrt.cc:27` `.thread_mode(true)` → `false`,
+      `concurrent_loop_backend_ffrt.cc:50` `.thread_mode(true)` → `false`,
       rebuild, re-run. The thread count should plateau at ~`worker_count_`
       instead of spiking. Revert before continuing.
 

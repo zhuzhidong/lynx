@@ -180,21 +180,27 @@ class ConcurrentLoopBackendFFRT : public ConcurrentLoopBackend {
                             Thread::ThreadPriority priority,
                             size_t worker_count)
       : worker_count_(worker_count) {
-    auto attr = ffrt::queue_attr()
-                    .max_concurrency(static_cast<int>(worker_count))    // worker 数 → 队列并发度
-                    .qos(MapQos(priority))                             // 队列级 QoS
-                    .thread_mode(true);   // 永久线程模式（理由见设计决策 #5）
+    // queue_attr's copy ctor is deleted, so bind the chain expression
+    // directly to ffrt::queue (no intermediate local).
     queue_ = std::make_unique<ffrt::queue>(
-        ffrt::queue_concurrent, name.c_str(), attr);
+        ffrt::queue_concurrent,
+        name.c_str(),
+        ffrt::queue_attr()
+            .max_concurrency(static_cast<int>(worker_count))    // worker 数 → 队列并发度
+            .qos(MapQos(priority))                             // 队列级 QoS
+            .thread_mode(true));  // 永久线程模式（理由见设计决策 #5）
   }
 
   ~ConcurrentLoopBackendFFRT() override = default;   // ffrt::queue RAII → ffrt_queue_destroy
 
   void PostTask(base::closure task) override {
+    // ffrt::queue::submit needs a CopyConstructible callable, but
+    // base::closure is move-only, so wrap it in a shared_ptr.
+    auto shared_task = std::make_shared<base::closure>(std::move(task));
     // 任务级哨兵：进入任务设、退出清（替代 BackendStd 的线程级哨兵）
-    auto wrapped = [this, t = std::move(task)]() mutable {
+    auto wrapped = [this, shared_task]() {
       g_current_worker = this;
-      t();
+      (*shared_task)();
       g_current_worker = nullptr;
     };
     queue_->submit(std::move(wrapped));  // fire-and-forget，C++ API 内部转 create_function_wrapper
@@ -209,30 +215,35 @@ class ConcurrentLoopBackendFFRT : public ConcurrentLoopBackend {
   void Terminate() override { queue_.reset(); }   // 触发 RAII 析构
 
  private:
-  static ffrt::qos MapQos(Thread::ThreadPriority p) {
-    switch (p) {
-      // HIGH 用最高档（"与用户交互，例如 UI 响应"），与 NORMAL 拉开 2 档差距。
-      // qos_user_interactive 在 enum 文档里标 @since 23，但 FFRT C 接口
-      // 不校验 QoS enum 值与 API 级别的对应，整数值 5 在所有 API 都可传。
-      case Thread::ThreadPriority::HIGH: return ffrt::qos_user_interactive;
-      case Thread::ThreadPriority::LOW:
-      case Thread::ThreadPriority::BACKGROUND: return ffrt::qos_background;
-      case Thread::ThreadPriority::NORMAL:
-      default: return ffrt::qos_default;
-    }
-  }
-
+  // MapQos is defined in the anonymous namespace below this class
+  // (file-scope; no need to be a class member).
   std::unique_ptr<ffrt::queue> queue_;
   size_t worker_count_;
   // 进程内唯一哨兵（编译期单后端，不会与其他后端共存）
-  static thread_local ConcurrentLoopBackend* g_current_worker;
+  static thread_local ConcurrentLoopBackendFFRT* g_current_worker;
 };
+
+namespace {
+// HIGH → qos_user_initiated (highest user-initiated QoS class).
+ffrt::qos MapQos(Thread::ThreadPriority p) {
+  switch (p) {
+    case Thread::ThreadPriority::HIGH:
+      return ffrt::qos_user_initiated;
+    case Thread::ThreadPriority::LOW:
+    case Thread::ThreadPriority::BACKGROUND:
+      return ffrt::qos_background;
+    case Thread::ThreadPriority::NORMAL:
+    default:
+      return ffrt::qos_default;
+  }
+}
+}  // namespace
 ```
 
 **关键设计决策**
 
 1. **C++ 接口全程**（不用 C `ffrt_queue_*`）：`ffrt::queue_attr` / `ffrt::queue` 都是 RAII，`submit(std::function&&)` 直接接受 lambda（内部封装 `create_function_wrapper`），无需手写 `ffrt_function_header_t`，无需 `ffrt_task_attr_init/destroy` 等样板。
-2. **两池各自一个 `ffrt::queue`**：`LynxHighTask` / `LynxNormalTask` 各建一个 concurrent 队列，分别设 `ffrt::qos_user_interactive`（HIGH，UI 响应档）/ `ffrt::qos_default`（NORMAL，默认档）。HIGH 与 NORMAL 拉开 2 档差距，便于 FFRT 在 worker 饱和时做明显调度区分。**不用同队列内的 queue_priority**（避免高优先级插队饿死低优先级）。
+2. **两池各自一个 `ffrt::queue`**：`LynxHighTask` / `LynxNormalTask` 各建一个 concurrent 队列，分别设 `ffrt::qos_user_initiated`（HIGH）/ `ffrt::qos_default`（NORMAL）。HIGH 与 NORMAL 拉开 2 档差距，便于 FFRT 在 worker 饱和时做明显调度区分。**不用同队列内的 queue_priority**（避免高优先级插队饿死低优先级）。
 3. **worker 数 = `max_concurrency`**：直接映射。
 4. **FFRT 共享 worker 池**：两个队列都从 FFRT 运行时的共享 worker 池调度，由 FFRT 按 QoS 仲裁——与 BackendStd「每池独占线程」不同，但呼应 FFRT「集约化管理线程」的设计目标，减少总线程数。
 5. **线程模式（`thread_mode(true)`）永久开启**：
