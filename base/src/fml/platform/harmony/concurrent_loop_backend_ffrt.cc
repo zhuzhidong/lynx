@@ -53,6 +53,13 @@ ConcurrentLoopBackendFFRT::ConcurrentLoopBackendFFRT(
 ConcurrentLoopBackendFFRT::~ConcurrentLoopBackendFFRT() = default;
 
 void ConcurrentLoopBackendFFRT::PostTask(base::closure task) {
+  // After Terminate(), queue_ has been reset; run the task synchronously
+  // on the caller's thread rather than dereferencing a null queue_.
+  if (!queue_) {
+    task();
+    return;
+  }
+
   // ffrt::queue::submit needs a CopyConstructible callable, but
   // base::closure is move-only, so wrap it in a shared_ptr.
   auto shared_task = std::make_shared<base::closure>(std::move(task));
