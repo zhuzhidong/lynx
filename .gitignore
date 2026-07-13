@@ -94,10 +94,7 @@ explorer/darwin/ios/lynx_explorer/LynxExplorer.xcodeproj/**
 explorer/darwin/ios/lynx_explorer/LynxExplorer/Resource/*
 !explorer/darwin/ios/lynx_explorer/LynxExplorer/Resource/testBench
 
-# Generated showcase JS bundles (produced by explorer/showcase/build_and_copy.py).
-# Targets the showcase/ subdir only so it does not affect sibling tracked
-# files (e.g. Info.plist in macos Resource, main.lynx.bundle in harmony
-# rawfile). android/ios are already covered above.
+# Generated showcase JS bundles (build_and_copy.py); per-platform subdirs only.
 explorer/darwin/macos/lynx_explorer/Resource/showcase/
 explorer/harmony/lynx_explorer/src/main/resources/rawfile/showcase/
 explorer/windows/lynx_explorer/resources/showcase/
