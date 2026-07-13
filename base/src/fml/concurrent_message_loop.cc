@@ -45,9 +45,7 @@ ConcurrentMessageLoop::ConcurrentMessageLoop(
 }
 
 ConcurrentMessageLoop::~ConcurrentMessageLoop() {
-  // The backend's destructor handles worker thread join. Terminate() is
-  // called explicitly to flip the facade-level shutdown_ flag and let the
-  // backend drain its queue.
+  // The backend's destructor joins the worker threads.
   Terminate();
 }
 
@@ -56,9 +54,8 @@ void ConcurrentMessageLoop::PostTask(base::closure task) {
     return;
   }
 
-  // C2 fallback: after shutdown, run the task synchronously on the
-  // caller's thread rather than dropping it on the floor. This matches
-  // the behavior of the previous in-place implementation.
+  // After shutdown, run the task synchronously on the caller's thread
+  // rather than dropping it on the floor.
   if (shutdown_.load()) {
     task();
     return;

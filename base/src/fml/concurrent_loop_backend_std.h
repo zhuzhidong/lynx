@@ -19,11 +19,7 @@
 namespace lynx {
 namespace fml {
 
-// Concrete ConcurrentLoopBackend implementation that uses the standard
-// std::thread pool. This is a 1:1 port of the previous
-// base/src/fml/concurrent_message_loop.cc implementation; observable
-// behavior is intentionally identical (CAS claim, staggered wake,
-// adaptive sleep, iOS autoreleasepool wrap, thread_local current worker).
+// Concrete ConcurrentLoopBackend using std::thread.
 class ConcurrentLoopBackendStd final : public ConcurrentLoopBackend {
  public:
   ConcurrentLoopBackendStd(const std::string& name_prefix,
