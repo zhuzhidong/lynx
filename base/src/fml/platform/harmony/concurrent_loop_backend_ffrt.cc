@@ -7,12 +7,7 @@
 #include <memory>
 #include <utility>
 
-// @ppd/ffrt transitively pulls job_ring.h, which has an unused variable
-// that triggers -Werror. Suppress just around the third-party include.
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-variable"
-#include "ffrt/ffrt.h"  // @ppd/ffrt 1.1.8 — C++ wrappers (header-only)
-#pragma GCC diagnostic pop
+#include "ffrt/ffrt.h"  // @ppd/ffrt 1.1.9 — C++ wrappers (header-only)
 
 namespace lynx {
 namespace fml {

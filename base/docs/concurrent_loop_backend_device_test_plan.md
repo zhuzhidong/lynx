@@ -13,11 +13,11 @@
 
 - [ ] **Hardware / OS**
   - HarmonyOS device with **API ≥ 20** enabled.
-    - Rationale: `ffrt/ffrt.h` (from `@ppd/ffrt@1.1.8`) uses
+    - Rationale: `ffrt/ffrt.h` (from `@ppd/ffrt@1.1.9`) uses
       `#if OH_CURRENT_API_VERSION >= 20` for the C-side `ffrt/fiber.h`. The
       Lynx backend does not include `fiber.h`, but the spec states API ≥ 20
       as the baseline required for `thread_mode(true)` semantics.
-    - The `thread_mode(true)` flag is supported by `@ppd/ffrt@1.1.8` (added
+    - The `thread_mode(true)` flag is supported by `@ppd/ffrt@1.1.9` (added
       in CHANGELOG entry "v1.1.1: 队列任务支持以线程模式运行").
     - If your device is API < 20, the BackendFFRT code will still compile
       (the API 20 gate only affects `fiber.h`), but `thread_mode(true)` is
@@ -37,7 +37,7 @@
   (cd platform/harmony   && ohpm install) # pulls @lynx/primjs (harmony.gni needs it)
   ls base/platform/harmony/oh_modules/@ppd/ffrt        # @ppd/ffrt symlink (auto-created by explorer install) should exist
   readlink base/platform/harmony/oh_modules/@ppd/ffrt  # should resolve to
-    # ../../../../../explorer/harmony/oh_modules/.ohpm/@ppd+ffrt@1.1.8/oh_modules/@ppd/ffrt
+    # ../../../../../explorer/harmony/oh_modules/.ohpm/@ppd+ffrt@1.1.9/oh_modules/@ppd/ffrt
   ```
 
 - [ ] **HiTrace / HiView** — install HiTrace (or use the `hitrace` shell
