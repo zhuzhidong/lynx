@@ -39,9 +39,8 @@ class ConcurrentLoopBackendFFRT final : public ConcurrentLoopBackend {
   size_t worker_count_;
   // Stored for parity with BackendStd; currently unused.
   Thread::ThreadConfigSetter setter_;
-  // Set by Terminate() to gate new submissions. Read by PostTask to
-  // fall back to synchronous execution after termination. The actual
-  // FFRT queue destruction is deferred to the destructor.
+  // Set by Terminate() before queue destruction; gates PostTask to fall
+  // back to synchronous execution.
   std::atomic_bool terminated_{false};
 
   static thread_local ConcurrentLoopBackendFFRT* g_current_worker;

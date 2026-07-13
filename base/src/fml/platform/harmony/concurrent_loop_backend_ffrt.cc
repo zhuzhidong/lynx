@@ -53,20 +53,14 @@ ConcurrentLoopBackendFFRT::ConcurrentLoopBackendFFRT(
 ConcurrentLoopBackendFFRT::~ConcurrentLoopBackendFFRT() = default;
 
 void ConcurrentLoopBackendFFRT::PostTask(base::closure task) {
-  // Once Terminate() has been called, fall back to running the task
-  // synchronously on the caller's thread. We cannot keep submitting to
-  // the FFRT queue because its destruction (via ffrt_queue_destroy) is
-  // deferred to the destructor and would race with a concurrent submit.
+  // After Terminate(), run synchronously instead of submitting.
   if (terminated_.load()) {
     task();
     return;
   }
 
-  // ffrt::queue::submit needs a CopyConstructible callable, but
-  // base::closure is move-only, so wrap it in a shared_ptr.
+  // ffrt::queue::submit needs CopyConstructible; base::closure is move-only.
   auto shared_task = std::make_shared<base::closure>(std::move(task));
-  // ffrt::queue is configured with thread_mode(true), so this lambda runs
-  // on a single OS thread and the per-task thread_local is observable.
   auto wrapped = [this, shared_task]() {
     g_current_worker = this;
     (*shared_task)();
@@ -80,15 +74,10 @@ bool ConcurrentLoopBackendFFRT::RunsTasksOnCurrentThreadWorker() const {
 }
 
 void ConcurrentLoopBackendFFRT::Terminate() {
-  // Mark the backend as terminated so PostTask falls back to synchronous
-  // execution. Non-blocking: the actual FFRT queue destruction (which
-  // waits for in-flight tasks via ffrt_queue_destroy) is deferred to
-  // ~ConcurrentLoopBackendFFRT(). Decoupling these two steps:
-  //   - avoids deadlock if a running task calls Terminate() (Terminate
-  //     would otherwise wait for the task it was called from);
-  //   - lets callers of Terminate() return immediately instead of
-  //     blocking on in-flight work (e.g. image decoding, font loading).
+  // Set the flag first so PostTask falls back to sync execution, then
+  // destroy the queue (blocks until in-flight tasks finish).
   terminated_.store(true);
+  queue_.reset();
 }
 
 }  // namespace fml
