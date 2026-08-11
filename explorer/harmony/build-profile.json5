@@ -11,7 +11,8 @@
             "caseSensitiveCheck": true,
             "useNormalizedOHMUrl": true
           }
-        }
+        },
+        "targetSdkVersion": "6.1.1(24)"
       }
     ],
     "buildModeSet": [
@@ -26,6 +27,19 @@
       }
     ],
     "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "/Users/cct/.ohos/config/default_harmony_VAjYBTSLmy72n4pxPZPTGTnU_zs4yTqZqGI_KqRgTPg=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001B4B095E08B597D97B13C7E9C660D755C27769F99F3FACF2329A019CBD637520D39AF451BF7A4CD2",
+          "profile": "/Users/cct/.ohos/config/default_harmony_VAjYBTSLmy72n4pxPZPTGTnU_zs4yTqZqGI_KqRgTPg=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "/Users/cct/.ohos/config/default_harmony_VAjYBTSLmy72n4pxPZPTGTnU_zs4yTqZqGI_KqRgTPg=.p12",
+          "storePassword": "0000001B7B4C7DBAECAD8CAE2DCB57635CEBC5280B02A3B088C321ECAEB6BD81440C087B2F19D1B5B55811"
+        }
+      }
     ]
   },
   "modules": [

@@ -93,6 +93,9 @@ explorer/darwin/ios/lynx_explorer/LynxExplorer.xcodeproj/**
 !explorer/darwin/ios/lynx_explorer/LynxExplorer.xcodeproj/xcshareddata/**
 explorer/darwin/ios/lynx_explorer/LynxExplorer/Resource/*
 !explorer/darwin/ios/lynx_explorer/LynxExplorer/Resource/testBench
+# macOS / Windows explorer showcase bundles (generated)
+explorer/darwin/macos/lynx_explorer/Resource/showcase/
+explorer/windows/lynx_explorer/resources/showcase/
 explorer/darwin/ios/lynx_explorer/iOSCoreBuild/
 explorer/darwin/ios/lynx_explorer/results_bundle
 explorer/darwin/ios/lynx_explorer/xctestrunner
