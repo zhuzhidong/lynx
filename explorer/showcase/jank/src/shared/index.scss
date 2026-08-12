@@ -1,0 +1,46 @@
+// Copyright 2025 The Lynx Authors. All rights reserved.
+// Licensed under the Apache License Version 2.0 that can be found in the
+// LICENSE file in the root directory of this source tree.
+
+.toggle {
+  width: 100%;
+  padding: 8px 12px;
+  background-color: #f5f6f8;
+  border-bottom: 1px solid #e1e4e8;
+
+  &__buttons {
+    display: flex;
+    flex-direction: row;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+
+  &__btn {
+    flex: 1;
+    padding: 8px 0;
+    background-color: #ffffff;
+    border: 1px solid #d0d3d9;
+    border-radius: 6px;
+    align-items: center;
+    justify-content: center;
+
+    &--active {
+      background-color: #1677ff;
+      border-color: #1677ff;
+    }
+  }
+
+  &__btn-text {
+    font-size: 14px;
+    color: #333333;
+  }
+
+  &__btn--active &__btn-text {
+    color: #ffffff;
+  }
+
+  &__hint {
+    font-size: 12px;
+    color: #666666;
+  }
+}

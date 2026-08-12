@@ -126,3 +126,29 @@ for filename in os.listdir(menu_dist_dir):
         shutil.copy(os.path.join(menu_dist_dir, filename), menu_harmony)
         shutil.copy(os.path.join(menu_dist_dir, filename), menu_windows)
         shutil.copy(os.path.join(menu_dist_dir, filename), menu_macos)
+
+# Copy jank scene resources (local workspace package, not in node_modules).
+# The showcase_* dirs above were wiped and recreated, so we only need to
+# create the per-platform `jank/` subdirectory and copy bundles in.
+jank_dist_dir = os.path.join(showcase_root_dir, "jank", "dist")
+if os.path.exists(jank_dist_dir):
+    jank_android = os.path.join(showcase_android, "jank")
+    jank_ios = os.path.join(showcase_ios, "jank")
+    jank_harmony = os.path.join(showcase_harmony, "jank")
+    jank_windows = os.path.join(showcase_windows, "jank")
+    jank_macos = os.path.join(showcase_macos, "jank")
+    print(f"Creating jank directories")
+    os.makedirs(jank_android)
+    os.makedirs(jank_ios)
+    os.makedirs(jank_harmony)
+    os.makedirs(jank_windows)
+    os.makedirs(jank_macos)
+    for filename in os.listdir(jank_dist_dir):
+        if filename.endswith(".lynx.bundle"):
+            shutil.copy(os.path.join(jank_dist_dir, filename), jank_android)
+            shutil.copy(os.path.join(jank_dist_dir, filename), jank_ios)
+            shutil.copy(os.path.join(jank_dist_dir, filename), jank_harmony)
+            shutil.copy(os.path.join(jank_dist_dir, filename), jank_windows)
+            shutil.copy(os.path.join(jank_dist_dir, filename), jank_macos)
+else:
+    print("WARNING: jank dist not found; was @showcase/jank built?")

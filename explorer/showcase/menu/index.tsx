@@ -60,6 +60,11 @@ const ITEMS: ItemProps[] = [
     url: 'file://lynx?local://showcase/menu/layout.lynx.bundle',
   },
   {
+    title: 'Jank',
+    description: 'Reproduces root-cause categories of frame drops, with an FPS overlay',
+    url: 'file://lynx?local://showcase/menu/jank.lynx.bundle',
+  },
+  {
     title: 'Lazy Bundle',
     description: 'An example shows how to use lazy loading component',
     url: 'file://lynx?local://showcase/lazy-bundle/main.lynx.bundle',

@@ -16,6 +16,7 @@ export default defineConfig({
       list: './sub-menu/list.tsx',
       scrollview: './sub-menu/scrollview.tsx',
       text: './sub-menu/text.tsx',
+      jank: './sub-menu/jank.tsx',
     },
     alias: {
       "@components": "./components",

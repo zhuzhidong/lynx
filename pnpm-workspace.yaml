@@ -10,6 +10,7 @@ packages:
   - explorer/homepage
   - explorer/showcase
   - explorer/showcase/menu
+  - explorer/showcase/jank
   # base devtool
   - 'lynx/devtool/base_devtool/js_libraries/logbox'
   - tools/api/parser/ts_morph

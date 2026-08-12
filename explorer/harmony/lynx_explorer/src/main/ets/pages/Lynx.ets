@@ -28,6 +28,7 @@ import { ExampleGenericResourceFetcher } from '../provider/ExampleGenericResourc
 import { ExampleMediaResourceFetcher } from '../provider/ExampleMediaResourceFetcher';
 import { ExampleTemplateResourceFetcher } from '../provider/ExampleTemplateResourceFetcher';
 import { ExplorerModule } from '../module/ExplorerModule';
+import { FpsOverlay } from '../components/FpsOverlay';
 
 const TAG = 'LynxPage'
 const TEST_DENSITY = 2;
@@ -111,29 +112,33 @@ struct Lynx {
   }
 
   build() {
-    Column() {
-      Text('Lynx').fontSize(18).width('100%').height('5%').textAlign(TextAlign.Center)
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column() {
+        Text('Lynx').fontSize(18).width('100%').height('5%').textAlign(TextAlign.Center)
 
-      LynxView({
-        clients: this.clients,
-        url: this.url,
-        genericResourceFetcher: this.genericFetcher,
-        mediaResourceFetcher: this.mediaFetcher,
-        templateResourceFetcher: this.templateFetcher,
-        modules: this.modules,
-        sendableModules: this.sendableModules,
-        behaviors: this.behaviors,
-        metaData: this.metaData,
-        onCreate: (context: LynxContext) => {
-          let param: Param = new Param(this.url);
-          context.sendGlobalEvent('viewAppear', [param]);
-          if (this.widthPixel > 0 && this.heightPixel > 0) {
-            context.updateScreenMetrics(this.widthPixel * this.viewDensity / TEST_DENSITY,
-              this.heightPixel * this.viewDensity / TEST_DENSITY);
+        LynxView({
+          clients: this.clients,
+          url: this.url,
+          genericResourceFetcher: this.genericFetcher,
+          mediaResourceFetcher: this.mediaFetcher,
+          templateResourceFetcher: this.templateFetcher,
+          modules: this.modules,
+          sendableModules: this.sendableModules,
+          behaviors: this.behaviors,
+          metaData: this.metaData,
+          onCreate: (context: LynxContext) => {
+            let param: Param = new Param(this.url);
+            context.sendGlobalEvent('viewAppear', [param]);
+            if (this.widthPixel > 0 && this.heightPixel > 0) {
+              context.updateScreenMetrics(this.widthPixel * this.viewDensity / TEST_DENSITY,
+                this.heightPixel * this.viewDensity / TEST_DENSITY);
+            }
+            context.setExtraTiming(this.extraTiming);
           }
-          context.setExtraTiming(this.extraTiming);
-        }
-      }).height(this.viewHeight).width(this.viewWidth)
-    }.size({ width: '100%', height: '100%' }).alignItems(HorizontalAlign.Start)
+        }).height(this.viewHeight).width(this.viewWidth)
+      }.size({ width: '100%', height: '100%' }).alignItems(HorizontalAlign.Start)
+
+      FpsOverlay({ visible: true })
+    }.size({ width: '100%', height: '100%' })
   }
 }
