@@ -11,41 +11,52 @@ import { SceneShell } from "@shared/SceneShell";
 // (width/height/top) forces layout+paint every frame, vs compositor-only
 // properties (transform/opacity) which the GPU can cheaply composite.
 // Toggle the mode to see the contrast side by side.
+//
+// NOTE: uses setInterval (not requestAnimationFrame) because ReactLynx runs
+// component logic on the Lepus background thread, where RAF is not defined.
 
 const LEVELS: IntensityLevel[] = [
-  { label: "Reflow", hint: "animate width/height — layout+paint per frame, drop1/drop3" },
+  { label: "Reflow", hint: "animate width/height — layout+paint per tick, drop1/drop3" },
   { label: "Composite", hint: "animate transform/opacity — smooth 60fps" },
 ];
 type Mode = "reflow" | "composite";
+const TICK_MS = 16;
 
 function AnimationReflow() {
   const trace = useJankTrace("animation-reflow");
   const [level, setLevel] = useState(0);
   const mode: Mode = level === 0 ? "reflow" : "composite";
   const [phase, setPhase] = useState(0); // 0..1 animation phase
+  const [running, setRunning] = useState(false);
   const phaseRef = useRef(0);
   phaseRef.current = phase;
-  const rafIdRef = useRef(0);
   const dirRef = useRef(1);
+  const intervalRef = useRef(0);
+  const modeRef = useRef<Mode>(mode);
+  modeRef.current = mode;
 
-  useEffect(() => () => { if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current); }, []);
+  useEffect(() => () => {
+    if (intervalRef.current) clearInterval(intervalRef.current);
+  }, []);
 
-  const start = () => {
-    const tick = () => {
-      trace.mark(mode);
-      let p = phaseRef.current + dirRef.current * 0.04;
-      if (p >= 1) { p = 1; dirRef.current = -1; }
-      else if (p <= 0) { p = 0; dirRef.current = 1; }
-      phaseRef.current = p;
-      setPhase(p);
-      rafIdRef.current = requestAnimationFrame(tick);
-    };
-    rafIdRef.current = requestAnimationFrame(tick);
+  const tick = () => {
+    trace.mark(modeRef.current);
+    let p = phaseRef.current + dirRef.current * 0.04;
+    if (p >= 1) { p = 1; dirRef.current = -1; }
+    else if (p <= 0) { p = 0; dirRef.current = 1; }
+    phaseRef.current = p;
+    setPhase(p);
   };
 
-  const stop = () => {
-    if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current);
-    rafIdRef.current = 0;
+  const toggle = () => {
+    if (running) {
+      setRunning(false);
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      intervalRef.current = 0;
+    } else {
+      setRunning(true);
+      intervalRef.current = setInterval(tick, TICK_MS);
+    }
   };
 
   // size interpolates 40px -> 120px
@@ -56,7 +67,7 @@ function AnimationReflow() {
   const cells: any[] = [];
   for (let i = 0; i < 60; i++) {
     if (mode === "reflow") {
-      // Animating width/height: every frame triggers layout on each cell.
+      // Animating width/height: every tick triggers layout on each cell.
       cells.push(
         <view key={`c-${i}`} style={{ margin: "4px", flexDirection: "row" }}>
           <view style={{ width: `${size}px`, height: `${size}px`, backgroundColor: "#1677ff" }} />
@@ -83,17 +94,15 @@ function AnimationReflow() {
   return (
     <SceneShell
       title="Animation Reflow (layout vs composite properties)"
-      description="Animating width/height triggers layout+paint every frame; transform/opacity is compositor-only. Toggle modes and compare fps."
-      controls={
-        <IntensityToggle levels={LEVELS} initial={0} onChange={(i) => { setLevel(i); }} />
-      }
+      description="Animating width/height triggers layout+paint every tick; transform/opacity is compositor-only. Toggle modes and compare fps."
+      controls={<IntensityToggle levels={LEVELS} initial={0} onChange={setLevel} />}
     >
       <view style={{ padding: "12px", flexDirection: "row" }}>
         <view
-          bindtap={() => { rafIdRef.current ? stop() : start(); }}
+          bindtap={toggle}
           style={{ padding: "12px", alignItems: "center", backgroundColor: "#1677ff", borderRadius: "8px", marginRight: "12px" }}
         >
-          <text style={{ color: "#ffffff", fontSize: "14px" }}>{rafIdRef.current ? "Pause" : "Play"}</text>
+          <text style={{ color: "#ffffff", fontSize: "14px" }}>{running ? "Pause" : "Play"}</text>
         </view>
         <text style={{ fontSize: "12px", color: "#666666", alignSelf: "center" }}>
           mode: {mode} · phase: {phase.toFixed(2)}
