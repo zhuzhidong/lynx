@@ -171,9 +171,13 @@ export struct FpsOverlay {
   toggleTrace() {
     if (!this.tracing) {
       const ctx = getContext(this);
+      // NOTE: do NOT pass bufferSize here. The TraceConfig type declares it
+      // as `number`, but the native bridge (NapiUtil::ConvertToMap) turns a
+      // JS Number into an empty string, and trace_controller_harmony.cc then
+      // calls std::stoi("") which throws std::invalid_argument and crashes
+      // the process. Omit it to use the native default (~80MB).
       const cfg: TraceConfig = {
         filePath: ctx.filesDir + '/jank.trace',
-        bufferSize: 8 * 1024 * 1024,
         enableCompress: 'true',
       };
       TraceController.getInstance().startTracing(cfg);
