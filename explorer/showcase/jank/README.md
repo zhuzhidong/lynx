@@ -54,6 +54,8 @@ Lynx 在 HarmonyOS 上的线程模型(关键背景):
 - `IntensityToggle`:Low/Med/High(或自定义)强度切换,即时生效。
 - `useJankTrace`:挂载时开 `lynx.performance.profileStart('jank:<场景>')`,卸载时 `profileEnd()`;热路径 `mark(label)` 发 instant,用 flowId 关联回该段。`isProfileRecording()` 为 false 时零开销。
 
+> ⚠️ 下文各场景"观测信号"里提到的 `dropX` 桶,在实际中**几乎都为 0**——drop 是 hitch-based,抓不到持续慢渲染(详见 §四"重要局限")。所以 drop 桶别指望;主看 **FPS / 响应性 / RSS / trace**。下文保留 drop 字样只是理论上它会进哪个桶。
+>
 > 说明:ReactLynx 组件逻辑跑在 **Lepus(JS)线程**。该线程全局**没有** `requestAnimationFrame`(那是主线程全局),也没有 `Date.now`。所以凡需要周期循环的场景统一用 `setInterval`(后台线程可用)。这也是为什么纯 JS 长任务不一定会让 UI 掉帧——见下文每个场景的"信号"。
 
 ### 1. Long Task — JS 线程阻塞
@@ -153,6 +155,25 @@ Lynx 在 HarmonyOS 上的线程模型(关键背景):
 
 浮窗显示的是**过去 1 秒落入各桶的帧数**,桶之间**互斥**(一帧只算最严重桶)。口径与 Lynx 上报的 `lynxsdk_fluency_drop{1,3,7,25}` 一致(Lynx 自家用累加式,这里为好读改互斥)。
 
+#### 重要局限:drop 是 hitch-based,抓不到"持续慢渲染"
+
+drop 桶的判定用的是 **hitch**(卡顿时长),不是 **duration**(相邻帧实际间隔):
+
+```txt
+hitch = info.timestamp − lastTargetTimestampNanos
+     = 当前帧时间 − 上一帧的"下一帧目标时间"
+```
+
+`displaySync.IntervalInfo.targetTimestamp` 是"下一帧绘制时间"。在**持续慢渲染**下(本套大多数场景复现的就是这种),displaySync 会把 target 重同步到**实际的下一帧时间**(≈ current + 慢间隔),于是上一帧的 target ≈ 这一帧的 timestamp → `hitch ≈ 0` → **不进任何 drop 桶**。
+
+结论:
+
+- **drop 桶抓的是"间歇性掉帧"**(一帧相对本来平稳节奏迟到)。
+- **持续型卡顿**(每帧都慢,如 Layout Explosion High、Long Task、GC Pressure)→ drop 恒为 0,信号看 **FPS**(单 digit = 严重卡顿)和 RSS/响应性。
+- 因此本套场景里 drop 大概率一直是 0——**这是指标设计特性,不是 bug**。Lynx 自家 `LynxFpsTracer` 用同样的 hitch 公式,特性一致;Lynx 的 throughput 看 FPS/frames,fluency drop 看 hitching,两者分工不同。
+
+> 如果要让 drop 在持续慢渲染下也亮,可把分桶从 hitch 换成 duration(相邻帧实际间隔),代价是与 Lynx 上报口径不再一致。当前保持 hitch-based 以对齐 Lynx。
+
 ### RSS
 
 `@ohos.hidebug.getAppNativeMemInfo()` 读 `/proc/<pid>/smaps_rollup` 的 Rss,即进程常驻物理内存。趋势比绝对值更有意义:持续涨=可能泄漏;锯齿振荡=典型 GC 压力。
@@ -169,7 +190,12 @@ Lynx 在 HarmonyOS 上的线程模型(关键背景):
 - 这类场景的正确信号是 **tap 延迟 + 僵死** 与 perfetto 里 Lepus 线程的长段,不是 UI 帧率。
 - Lynx 自家也有两套:LynxFpsTracer(UI 流畅度,本浮窗用)与 C++ `FluencyTracer`(`core/services/fluency/fluency_tracer.cc`,报 `lynxsdk_javascript_fluency_event`,即 JS 线程流畅度)。本浮窗暂只覆盖前者。
 
-因此:Layout Explosion / List Scroll / SetState Storm / Animation Reflow 会反映在浮窗 drop 上;Long Task / GC Pressure 主要靠响应性 + trace + RSS 看。
+因此观测信号要分类看:
+
+- **UI 线程卡顿**(Layout Explosion / List Scroll / Animation Reflow 的 Reflow 档 / SetState Storm):FPS 会跌。但 drop 桶**仍可能为 0**——因为这些场景复现的多为"持续慢渲染",而 drop 是 hitch-based,抓持续慢渲染无效(见上文 drop 局限一节)。看 **FPS**。
+- **JS 线程卡顿**(Long Task / GC Pressure):FPS 可能仍 60 或周期性掉,drop 基本不动。看 **tap 延迟 + 僵死**、perfetto 里 Lepus 线程长段、**RSS 锯齿**。
+
+一句话:**drop 桶在本套场景里大概率恒为 0**,别指望它;主看 FPS、响应性、RSS、trace。
 
 ---
 
@@ -191,15 +217,17 @@ python3 explorer/harmony/script/build.py --dev
 
 ## 六、场景 ↔ 根因 ↔ 信号 对照速查
 
-| 场景             | 根因类别        | 浮窗是否动    | 主要信号                   |
-| ---------------- | --------------- | ------------- | -------------------------- |
-| Long Task        | JS 线程阻塞     | 否(UI 帧不掉) | tap 延迟、僵死、trace 长段 |
-| Layout Explosion | Layout/TASM     | 是            | fling 时 drop3/drop7       |
-| SetState Storm   | 跨线程 dispatch | 是            | 稳定低 fps + 频繁 drop1    |
-| List Scroll      | 列表/滚动       | 是            | High 首屏 drop25           |
-| Image Decode     | 渲染/GPU        | 是            | 大图入视口 drop7/drop25    |
-| Animation Reflow | 帧调度          | 是            | Reflow 每帧 drop1/drop3    |
-| GC Pressure      | 内存/GC         | 否(周期冻)    | drop25 簇 + RSS 锯齿       |
+| 场景             | 根因类别        | FPS 是否跌      | drop 桶      | 主要信号                           |
+| ---------------- | --------------- | --------------- | ------------ | ---------------------------------- |
+| Long Task        | JS 线程阻塞     | 否(UI 闲,仍 60) | 恒 0         | tap 延迟、僵死、trace 长段         |
+| Layout Explosion | Layout/TASM     | 是(单 digit)    | 恒 0(持续慢) | FPS 跌、Profiler Layout slice      |
+| SetState Storm   | 跨线程 dispatch | 是              | 恒 0(持续慢) | FPS 低、PipelineEntry 高频、trace  |
+| List Scroll      | 列表/滚动       | 是              | 恒 0(持续慢) | FPS 跌、List/Layout slice          |
+| Image Decode     | 渲染/GPU        | 是              | 视情况       | 大图入视口 FPS 跌、解码线程忙      |
+| Animation Reflow | 帧调度          | 是(Reflow 档)   | 恒 0(持续慢) | Reflow 档 FPS 跌、Layout slice     |
+| GC Pressure      | 内存/GC         | 周期性掉        | 恒 0         | 周期冻帧、RSS 锯齿、trace GC slice |
+
+> 说明:drop 桶恒 0 是 hitch-based 指标对"持续慢渲染"的固有盲区(见 §四),不是 bug。主看 **FPS / 响应性 / RSS / trace**。
 
 ---
 
