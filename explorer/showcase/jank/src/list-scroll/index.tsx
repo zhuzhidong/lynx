@@ -31,7 +31,7 @@ function HeavyCell({ index }: { index: number }) {
             <text style={{ fontSize: "12px", color: "#888888" }}>heavy nested cell</text>
           </view>
         </view>
-        <view style={{ height: "80px", backgroundColor: "#ffffff", borderWidth: 1, borderColor: "#e1e4e8" }}>
+        <view style={{ height: "80px", backgroundColor: "#ffffff", borderWidth: "1px", borderColor: "#e1e4e8" }}>
           <text style={{ fontSize: "12px", padding: "6px", color: "#555555" }}>
             body content row {index}
           </text>

@@ -33,7 +33,7 @@ function Nest({ depth }: { depth: number }) {
         flexDirection: "row",
         padding: "4px",
         backgroundColor: depth % 2 === 0 ? "#fff7e6" : "#e6f4ff",
-        borderWidth: 1,
+        borderWidth: "1px",
         borderColor: "#d0d3d9",
       }}
     >
