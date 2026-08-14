@@ -15,6 +15,7 @@ export default defineConfig({
   source: {
     entry: {
       "long-task": "./src/long-task/index.tsx",
+      "main-thread-io": "./src/main-thread-io/index.tsx",
       "layout-explosion": "./src/layout-explosion/index.tsx",
       "setstate-storm": "./src/setstate-storm/index.tsx",
       "list-scroll": "./src/list-scroll/index.tsx",

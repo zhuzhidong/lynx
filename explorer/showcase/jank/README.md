@@ -31,18 +31,19 @@ Lynx 在 HarmonyOS 上的线程模型(关键背景):
 
 按根因,丢帧通常落在以下几类:
 
-| 类别                 | 典型表现                                    |
-| -------------------- | ------------------------------------------- |
-| JS 线程阻塞          | 长同步任务、大数据运算、同步 I/O 饿死帧回调 |
-| Layout / TASM 瓶颈   | 深嵌套 flex、滚 动触发 relayout、节点爆炸   |
-| 跨线程 dispatch 风暴 | 高频 setData,JS→TASM→UI 通路被打爆          |
-| 列表 / 滚动          | 大列表无虚拟化、重 cell、滚动中构建         |
-| 渲染 / GPU           | 大图解码、过度绘制、昂贵绘制                |
-| 帧调度               | 动画驱动 layout 属性(非 transform/opacity)  |
-| 内存 / GC            | 大量分配触发 GC 停顿                        |
-| 系统竞争             | 温控降频、后台抢占                          |
+| 类别                       | 典型表现                                        |
+| -------------------------- | ----------------------------------------------- |
+| JS 线程阻塞 (①)            | 长同步任务、大数据运算、同步 I/O 饿死帧回调     |
+| 主线程同步 I/O (⑤)         | UI/主线程同步等外部资源:文件/DB/Binder 卡主线程 |
+| Layout / TASM 瓶颈 (②)     | 深嵌套 flex、滚 动触发 relayout、节点爆炸       |
+| 跨线程 dispatch 风暴 (⑦+①) | 高频 setData,JS→TASM→UI 通路被打爆              |
+| 列表 / 滚动 (②)            | 大列表无虚拟化、重 cell、滚动中构建             |
+| 渲染 / GPU (⑥+③)           | 大图解码、过度绘制、昂贵绘制                    |
+| 帧调度 (②+⑧)               | 动画驱动 layout 属性(非 transform/opacity)      |
+| 内存 / GC (④)              | 大量分配触发 GC 停顿                            |
+| 系统竞争 (⑨)               | 温控降频、后台抢占                              |
 
-本套示例覆盖前 7 类。
+> 括号内为通用 9 类丢帧根因序号(见 §二背景对应的 9 类法)。本套示例覆盖前 8 类——仅系统竞争⑨不覆盖,因其属客观层(温控/调度/大小核迁移依赖真实系统状态,做不出确定性卡顿源)。
 
 ---
 
@@ -132,6 +133,22 @@ Lynx 在 HarmonyOS 上的线程模型(关键背景):
 
 **观测信号**:每隔几秒一次大冻(drop25 簇),其间 fps 正常;RSS 锯齿振荡(分配↑、GC↓);trace 里 GC slice 周期出现。与 Long Task 类似,这是 JS 线程卡顿,UI 帧未必掉,看 RSS 锯齿 + 周期冻帧。
 
+### 8. Main-thread Sync I/O — 主线程同步等外部资源
+
+**根因**:每 ~500ms 一次,经 `JankModule` 原生模块在 **UI/主(ArkTS)线程**上同步读 rawfile N 次(`resourceManager.getRawFileContentSync`),把产帧线程卡在真实文件 I/O 上。这是与 Long Task(①,卡 JS 线程、UI 帧未必掉)刻意配对的对照:这里卡的是 **UI 线程**,所以 fps 真跌。
+
+**强度**:10 / 100 / 500 次同步读/burst。
+
+**机制要点**:原生调用走异步派发(未声明 `syncMethods`)→ 跑在 UI 线程、JS 线程空闲;`mark('sync-io')` 每 burst。burst 是**间歇性**的(每 0.5s 一次),与 Layout/List/Reflow 的"持续慢"不同——所以 drop 桶在这里**会亮**(见 §四 drop 局限):这是本套唯一让 drop 桶成为主信号的场景。
+
+**观测信号**:
+
+- **fps 在 burst 间隙基本 60**,burst 瞬间崩;drop1/drop3/drop7/drop25 随强度亮起(间歇掉帧正是 hitch-based drop 能抓的形态)。
+- perfetto:UI/主线程上周期性 `getRawFileContentSync` 切片簇 + JS 线程空闲(对照 Long Task 的 Lepus 长段)。
+- 高强度档(500 次)单次分配量大,会捎带 ④(GC)的二次效应——若想看纯 ⑤,降强度档。
+
+> ⚠️ 平台依赖:本场景依赖 `JankModule`(注册于 `pages/Lynx.ets`),仅 Harmony 端可用;其他端 bundle 会显示"native module unavailable"而非崩溃。
+
 ---
 
 ## 四、浮窗指标说明(FpsOverlay)
@@ -192,7 +209,7 @@ hitch = info.timestamp − lastTargetTimestampNanos
 
 因此观测信号要分类看:
 
-- **UI 线程卡顿**(Layout Explosion / List Scroll / Animation Reflow 的 Reflow 档 / SetState Storm):FPS 会跌。但 drop 桶**仍可能为 0**——因为这些场景复现的多为"持续慢渲染",而 drop 是 hitch-based,抓持续慢渲染无效(见上文 drop 局限一节)。看 **FPS**。
+- **UI 线程卡顿**(Layout Explosion / List Scroll / Animation Reflow 的 Reflow 档 / SetState Storm / Main-thread Sync I/O):FPS 会跌。其中前四个是"持续慢渲染",drop 桶**仍为 0**(hitch-based 抓持续慢无效,见上文 drop 局限)→ 看 **FPS**。**Main-thread Sync I/O 是例外**:它是间歇性 burst,drop 桶**会亮**,看 drop + FPS。
 - **JS 线程卡顿**(Long Task / GC Pressure):FPS 可能仍 60 或周期性掉,drop 基本不动。看 **tap 延迟 + 僵死**、perfetto 里 Lepus 线程长段、**RSS 锯齿**。
 
 一句话:**drop 桶在本套场景里大概率恒为 0**,别指望它;主看 FPS、响应性、RSS、trace。
@@ -202,7 +219,7 @@ hitch = info.timestamp − lastTargetTimestampNanos
 ## 五、构建与运行
 
 ```bash
-# 1. 构建 JS bundle(菜单 + 7 场景)并拷贝到 5 平台
+# 1. 构建 JS bundle(菜单 + 8 场景)并拷贝到 5 平台
 python3 explorer/showcase/build_and_copy.py
 
 # 2. 构建 Lynx Harmony SDK(含 trace 支持,--dev 开启 perfetto)
@@ -217,17 +234,18 @@ python3 explorer/harmony/script/build.py --dev
 
 ## 六、场景 ↔ 根因 ↔ 信号 对照速查
 
-| 场景             | 根因类别        | FPS 是否跌      | drop 桶      | 主要信号                           |
-| ---------------- | --------------- | --------------- | ------------ | ---------------------------------- |
-| Long Task        | JS 线程阻塞     | 否(UI 闲,仍 60) | 恒 0         | tap 延迟、僵死、trace 长段         |
-| Layout Explosion | Layout/TASM     | 是(单 digit)    | 恒 0(持续慢) | FPS 跌、Profiler Layout slice      |
-| SetState Storm   | 跨线程 dispatch | 是              | 恒 0(持续慢) | FPS 低、PipelineEntry 高频、trace  |
-| List Scroll      | 列表/滚动       | 是              | 恒 0(持续慢) | FPS 跌、List/Layout slice          |
-| Image Decode     | 渲染/GPU        | 是              | 视情况       | 大图入视口 FPS 跌、解码线程忙      |
-| Animation Reflow | 帧调度          | 是(Reflow 档)   | 恒 0(持续慢) | Reflow 档 FPS 跌、Layout slice     |
-| GC Pressure      | 内存/GC         | 周期性掉        | 恒 0         | 周期冻帧、RSS 锯齿、trace GC slice |
+| 场景                 | 根因类别              | FPS 是否跌      | drop 桶      | 主要信号                           |
+| -------------------- | --------------------- | --------------- | ------------ | ---------------------------------- |
+| Long Task            | JS 线程阻塞 (①)       | 否(UI 闲,仍 60) | 恒 0         | tap 延迟、僵死、trace 長段         |
+| Main-thread Sync I/O | 主线程同步 I/O (⑤)    | 是(burst 瞬跌)  | **亮**(间歇) | drop 桶亮、UI 线程 sync-read 切片  |
+| Layout Explosion     | Layout/TASM (②)       | 是(单 digit)    | 恒 0(持续慢) | FPS 跌、Profiler Layout slice      |
+| SetState Storm       | 跨线程 dispatch (⑦+①) | 是              | 恒 0(持续慢) | FPS 低、PipelineEntry 高频、trace  |
+| List Scroll          | 列表/滚动 (②)         | 是              | 恒 0(持续慢) | FPS 跌、List/Layout slice          |
+| Image Decode         | 渲染/GPU (⑥+③)        | 是              | 视情况       | 大图入视口 FPS 跌、解码线程忙      |
+| Animation Reflow     | 帧调度 (②+⑧)          | 是(Reflow 档)   | 恒 0(持续慢) | Reflow 档 FPS 跌、Layout slice     |
+| GC Pressure          | 内存/GC (④)           | 周期性掉        | 恒 0         | 周期冻帧、RSS 锯齿、trace GC slice |
 
-> 说明:drop 桶恒 0 是 hitch-based 指标对"持续慢渲染"的固有盲区(见 §四),不是 bug。主看 **FPS / 响应性 / RSS / trace**。
+> 说明:drop 桶恒 0 是 hitch-based 指标对"持续慢渲染"的固有盲区(见 §四),不是 bug。主看 **FPS / 响应性 / RSS / trace**。唯一例外是 **Main-thread Sync I/O**:它是间歇性 burst,drop 桶会亮——也是本套验证 drop 指标确实有效的场景。
 
 ---
 
@@ -235,7 +253,7 @@ python3 explorer/harmony/script/build.py --dev
 
 ```txt
 explorer/showcase/jank/
-  lynx.config.mjs          # 7 场景多入口
+  lynx.config.mjs          # 8 场景多入口
   package.json             # @showcase/jank
   src/
     shared/
@@ -244,6 +262,7 @@ explorer/showcase/jank/
       SceneShell.tsx       # 场景外壳
       index.scss
     long-task/index.tsx
+    main-thread-io/index.tsx   # ⑤ 依赖下面的 JankModule(Harmony 专属)
     layout-explosion/index.tsx
     setstate-storm/index.tsx
     list-scroll/index.tsx
@@ -253,5 +272,6 @@ explorer/showcase/jank/
 explorer/showcase/menu/sub-menu/jank.tsx    # 子菜单
 explorer/harmony/lynx_explorer/src/main/ets/
   components/FpsOverlay.ets                 # FPS 浮窗
-  pages/Lynx.ets                            # 挂浮窗
+  pages/Lynx.ets                            # 挂浮窗;注册 JankModule(⑤)
+  module/JankModule.ets                     # ⑤:主线程同步 rawfile 读
 ```

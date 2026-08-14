@@ -18,6 +18,11 @@ const ITEMS: ItemProps[] = [
     url: 'file://lynx?local://showcase/jank/long-task.lynx.bundle',
   },
   {
+    title: 'Main-thread Sync I/O',
+    description: 'Sync rawfile read on UI thread (native module) -> frame blocked',
+    url: 'file://lynx?local://showcase/jank/main-thread-io.lynx.bundle',
+  },
+  {
     title: 'Layout Explosion',
     description: 'Deep nested flexbox + scroll-triggered relayout',
     url: 'file://lynx?local://showcase/jank/layout-explosion.lynx.bundle',

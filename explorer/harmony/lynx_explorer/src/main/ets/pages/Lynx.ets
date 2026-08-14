@@ -28,6 +28,7 @@ import { ExampleGenericResourceFetcher } from '../provider/ExampleGenericResourc
 import { ExampleMediaResourceFetcher } from '../provider/ExampleMediaResourceFetcher';
 import { ExampleTemplateResourceFetcher } from '../provider/ExampleTemplateResourceFetcher';
 import { ExplorerModule } from '../module/ExplorerModule';
+import { JankModule } from '../module/JankModule';
 import { FpsOverlay } from '../components/FpsOverlay';
 
 const TAG = 'LynxPage'
@@ -72,6 +73,13 @@ struct Lynx {
   aboutToAppear() {
     this.modules.set('ExplorerModule', {
       moduleClass: ExplorerModule,
+    });
+    // JankModule backs the "main-thread sync I/O" scene (root cause ⑤). The
+    // host Context is passed as `param` so the module can reach
+    // `resourceManager` for its synchronous rawfile read on the UI thread.
+    this.modules.set('JankModule', {
+      moduleClass: JankModule,
+      param: getContext(this),
     });
     if (this.url.startsWith(Constants.SSL_LOCAL)) {
       this.url = this.url.substring(Constants.SSL_LOCAL.length);
