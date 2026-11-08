@@ -64,6 +64,20 @@ class GridLayoutAlgorithm : public LayoutAlgorithm {
                      std::vector<LayoutUnit>& grow_limit);
   void CalcInlineAxisSizeContributions(MeasureItemCache& item_size_infos);
   void CalcBlockAxisSizeContributions(MeasureItemCache& item_size_infos);
+
+  // ffrt-parallelization (P1 extension to grid): both size-contribution
+  // measure passes are per-item independent (per-index cache writes, reads
+  // of not-yet-final track definitions), so large grids dispatch the item
+  // measurements to FFRT workers; small grids stay serial.
+  bool MeasureGridItemsInParallel(MeasureItemCache& item_size_infos,
+                                  bool block_axis_pass);
+  static void GridMeasureThunk(void* ctx, size_t idx);
+  void GridMeasureOneItem(MeasureItemCache& item_size_infos, size_t idx,
+                          bool block_axis_pass);
+  // Scratch state for the dispatching thunk (set around the parallel call,
+  // nullptr otherwise — see MeasureGridItemsInParallel).
+  MeasureItemCache* parallel_measure_cache_{nullptr};
+  bool parallel_measure_block_pass_{false};
   void ResolveIntrinsicTrackSizes(Dimension dimension,
                                   MeasureItemCache& item_size_infos,
                                   std::vector<float>& base_size,

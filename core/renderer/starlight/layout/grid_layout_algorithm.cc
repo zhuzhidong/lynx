@@ -3,6 +3,7 @@
 // LICENSE file in the root directory of this source tree.
 
 #include "core/renderer/starlight/layout/grid_layout_algorithm.h"
+#include "core/renderer/starlight/layout/parallel_measure.h"
 
 #include <algorithm>
 #include <utility>
@@ -747,6 +748,44 @@ void GridLayoutAlgorithm::InitTrackSize(Dimension dimension,
 
 void GridLayoutAlgorithm::CalcInlineAxisSizeContributions(
     MeasureItemCache& item_size_infos) {
+  // measure for size contributions
+  //
+  // ffrt-parallelization (P1 extension to grid): every iteration measures its
+  // own child against track definitions that are not yet finalized (read
+  // only) and writes a per-index cache entry, so sibling measurements are
+  // independent — dispatch to FFRT workers for large grids, keep the serial
+  // loop for small ones. The cache is pre-sized so parallel writes land in
+  // the same order the serial emplace_back produced.
+  item_size_infos.resize(grid_item_infos_.size());
+  if (!MeasureGridItemsInParallel(item_size_infos, /*block_axis_pass=*/false)) {
+    for (size_t idx = 0; idx < grid_item_infos_.size(); ++idx) {
+      GridMeasureOneItem(item_size_infos, idx, false);
+    }
+  }
+}
+
+void GridLayoutAlgorithm::GridMeasureOneItem(MeasureItemCache& item_size_infos,
+                                             size_t idx, bool block_axis_pass) {
+  auto& item_info = grid_item_infos_[idx];
+  LayoutObject* child = item_info.Item();
+  auto& entry = item_size_infos[idx];
+  entry.item_info = &item_info;
+  if (block_axis_pass) {
+    // Block-axis contributions re-measure with the containing block resolved
+    // from the (read-only) inline track sizes of the previous step.
+    Constraints constraints;
+    constraints[InlineAxis()] = OneSideConstraint::Definite(
+        item_info.ContainingBlock()[InlineAxis()].Size());
+    auto child_constraints =
+        property_utils::GenerateDefaultConstraints(*child, constraints);
+    const FloatSize layout_size =
+        child->UpdateMeasure(child_constraints, false);
+    entry.SetMaxContentBorderSize(BlockAxis(), layout_size.height_);
+    entry.SetMinContentBorderSize(BlockAxis(), 0.f);
+    return;
+  }
+  Constraints constraints;
+  if (!container_->GetLayoutConfigs().IsGridPreLayoutQuirksMode()) {
   const auto& PreCalcTrackSize = [this](GridItemInfo& item_info, Dimension dis,
                                         Constraints& constraints) {
     const size_t start = item_info.StartLine(dis);
@@ -780,59 +819,59 @@ void GridLayoutAlgorithm::CalcInlineAxisSizeContributions(
     }
   };
 
-  // measure for size contributions
-  for (auto& item_info : grid_item_infos_) {
-    auto* child = item_info.Item();
-    Constraints constraints;
-    if (!container_->GetLayoutConfigs().IsGridPreLayoutQuirksMode()) {
-      PreCalcTrackSize(item_info, InlineAxis(), constraints);
-      PreCalcTrackSize(item_info, BlockAxis(), constraints);
-    }
-
-    // TODO(yuanzhiwen): If both the grid container and all tracks have definite
-    // sizes, also apply align-content to find the final effective size of any
-    // gaps spanned by such items; otherwise ignore the effects of track
-    // alignment in this estimation.
-
-    auto child_constraints =
-        property_utils::GenerateDefaultConstraints(*child, constraints);
-    FloatSize layout_size = child->UpdateMeasure(child_constraints, false);
-
-    child->GetBoxInfo()->UpdateBoxData(constraints, *child,
-                                       child->GetLayoutConfigs());
-    auto& entry = item_size_infos.emplace_back();
-    entry.item_info = &item_info;
-    entry.SetMaxContentBorderSize(InlineAxis(), layout_size.width_);
-    entry.SetMinContentBorderSize(InlineAxis(), 0.f);
-    if (container_->GetLayoutConfigs().IsGridNewQuirksMode()) {
-      // To maintain compatibility with previous logic, we still calculate the
-      // size contribution on block direction here.
-      entry.SetMaxContentBorderSize(BlockAxis(), layout_size.height_);
-      entry.SetMinContentBorderSize(BlockAxis(), 0.f);
-    }
+    PreCalcTrackSize(item_info, InlineAxis(), constraints);
+    PreCalcTrackSize(item_info, BlockAxis(), constraints);
   }
+
+  // TODO(yuanzhiwen): If both the grid container and all tracks have definite
+  // sizes, also apply align-content to find the final effective size of any
+  // gaps spanned by such items; otherwise ignore the effects of track
+  // alignment in this estimation.
+
+  auto child_constraints =
+      property_utils::GenerateDefaultConstraints(*child, constraints);
+  FloatSize layout_size = child->UpdateMeasure(child_constraints, false);
+
+  child->GetBoxInfo()->UpdateBoxData(constraints, *child,
+                                     child->GetLayoutConfigs());
+  entry.SetMaxContentBorderSize(InlineAxis(), layout_size.width_);
+  entry.SetMinContentBorderSize(InlineAxis(), 0.f);
+  if (container_->GetLayoutConfigs().IsGridNewQuirksMode()) {
+    // To maintain compatibility with previous logic, we still calculate the
+    // size contribution on block direction here.
+    entry.SetMaxContentBorderSize(BlockAxis(), layout_size.height_);
+    entry.SetMinContentBorderSize(BlockAxis(), 0.f);
+  }
+}
+
+bool GridLayoutAlgorithm::MeasureGridItemsInParallel(
+    MeasureItemCache& item_size_infos, bool block_axis_pass) {
+  constexpr size_t kParallelMeasureThreshold = 8;
+  parallel_measure_cache_ = &item_size_infos;
+  parallel_measure_block_pass_ = block_axis_pass;
+  const bool ran = starlight::ParallelMeasureIndices(
+      grid_item_infos_.size(), kParallelMeasureThreshold,
+      &GridLayoutAlgorithm::GridMeasureThunk, this);
+  parallel_measure_cache_ = nullptr;
+  return ran;
+}
+
+void GridLayoutAlgorithm::GridMeasureThunk(void* ctx, size_t idx) {
+  auto* self = static_cast<GridLayoutAlgorithm*>(ctx);
+  self->GridMeasureOneItem(*self->parallel_measure_cache_, idx,
+                           self->parallel_measure_block_pass_);
 }
 
 void GridLayoutAlgorithm::CalcBlockAxisSizeContributions(
     MeasureItemCache& item_size_infos) {
   if (!container_->GetLayoutConfigs().IsGridNewQuirksMode()) {
-    for (auto& item_size : item_size_infos) {
-      const GridItemInfo& item_info = *item_size.item_info;
-      LayoutObject* const child = item_info.Item();
-      Constraints constraints;
-      // To find the inline-axis available space for any items whose block-axis
-      // size contributions require it, use the grid column sizes calculated in
-      // the previous step. If the grid container's inline size is definite,
-      // also apply justify-content to account for the effective column gap
-      // sizes.
-      constraints[InlineAxis()] = OneSideConstraint::Definite(
-          item_info.ContainingBlock()[InlineAxis()].Size());
-      auto child_constraints =
-          property_utils::GenerateDefaultConstraints(*child, constraints);
-      const FloatSize layout_size =
-          child->UpdateMeasure(child_constraints, false);
-      item_size.SetMaxContentBorderSize(BlockAxis(), layout_size.height_);
-      item_size.SetMinContentBorderSize(BlockAxis(), 0.f);
+    // ffrt-parallelization (P1 extension to grid): same per-item
+    // independence as the inline pass — the containing block only reads the
+    // resolved inline track sizes.
+    if (!MeasureGridItemsInParallel(item_size_infos, /*block_axis_pass=*/true)) {
+      for (size_t idx = 0; idx < grid_item_infos_.size(); ++idx) {
+        GridMeasureOneItem(item_size_infos, idx, true);
+      }
     }
   }
 }
