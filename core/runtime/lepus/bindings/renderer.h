@@ -232,6 +232,8 @@ constexpr static const char* kCFunctionGetElementByUniqueID =
     "__GetElementByUniqueID";
 constexpr static const char* kCFunctionGetTag = "__GetTag";
 constexpr static const char* kCFunctionSetAttribute = "__SetAttribute";
+constexpr static const char* kCFunctionBatchSetAttribute =
+    "__FiberBatchSetAttribute";
 constexpr static const char* kCFunctionGetAttributes = "__GetAttributes";
 constexpr static const char* kCFunctionGetAttributeByName =
     "__GetAttributeByName";
