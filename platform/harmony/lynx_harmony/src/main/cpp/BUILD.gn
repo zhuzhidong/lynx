@@ -316,4 +316,7 @@ config("harmony_public_config") {
     "OS_HARMONY=1",
     "OS_POSIX=1",
   ]
+
+  # FFRT C++ headers from the @ppd/ffrt ohpm package (module oh_modules).
+  include_dirs = [ "../../../oh_modules/@ppd/ffrt/include" ]
 }

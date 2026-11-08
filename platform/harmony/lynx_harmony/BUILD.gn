@@ -38,6 +38,7 @@ target(lynx_harmony_type, "lynx_harmony") {
   lib_dirs = [ primjs_native_lib_dir ]
   libs = [
     "deviceinfo_ndk.z",
+    "ffrt.z",
     "napi",
     "napi_adapter",
     "quick",
