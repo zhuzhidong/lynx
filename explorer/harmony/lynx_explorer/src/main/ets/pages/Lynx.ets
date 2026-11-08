@@ -24,7 +24,9 @@ import {
   ThreadStrategyForRendering,
   ModuleClassWrapper,
   SendableModuleClassWrapper,
-  TemplateData
+  TemplateData,
+  LynxTrailHub,
+  LynxTrailKey
 } from '@lynx/lynx';
 import { UISVG } from '@lynx/xelement_svg';
 import { UIWebView } from '@lynx/xelement_webview';
@@ -104,6 +106,13 @@ struct Lynx {
   });
 
   aboutToAppear() {
+    // ffrt-parallelization P10 (experiment): enable the engine's level-order
+    // parallel element resolution via the external trail env — subtree style
+    // resolution during OnPatchFinishForFiber then runs on the TASM worker
+    // pool. Set before the first LynxView loads.
+    LynxTrailHub.getInstance().setTrailMap({
+      [LynxTrailKey.ENABLE_LEVEL_ORDER_TRAVERSING]: 'true'
+    });
     this.routeIndex = router.getState().index;
     this.testModuleHost.active = true;
     this.modules.set('LynxTestModule', { moduleClass: LynxTestModule, param: this.testModuleHost });
