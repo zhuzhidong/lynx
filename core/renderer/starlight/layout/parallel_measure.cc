@@ -51,18 +51,28 @@ bool ParallelMeasureIndices(size_t count, size_t threshold,
   // effective worker concurrency: 2400 items / chunk 64 = ~4 concurrent
   // workers (vs 16 with chunk 16). Fewer concurrent workers means less
   // contention on Skia Typography's internal lock.
-  static const size_t kChunkSize = [] {
+  //
+  // The chunk adapts to the batch size so realistic small batches (30-50
+  // items, e.g. article-style reading pages) also get real worker
+  // parallelism: a fixed 256 swallows them into a single mega-chunk and the
+  // "parallel" batch degenerates to one worker. Large stress batches clamp
+  // to the measured optimum (~256, ~8 workers).
+  const size_t chunk = [&] {
     const char* env = getenv("LYNX_FFRT_CHUNK");
     if (env != nullptr) {
       const int v = atoi(env);
       if (v >= 8) return static_cast<size_t>(v);
     }
-    return static_cast<size_t>(256);  // default: ~5 workers (measured optimum)
+    constexpr size_t kTargetWorkers = 8;
+    constexpr size_t kMinChunk = 8;
+    constexpr size_t kMaxChunk = 256;
+    return std::min(std::max((count - warmup) / kTargetWorkers, kMinChunk),
+                    kMaxChunk);
   }();
   std::vector<ffrt::task_handle> handles;
-  handles.reserve((count - warmup + kChunkSize - 1) / kChunkSize);
-  for (size_t begin = warmup; begin < count; begin += kChunkSize) {
-    const size_t end = std::min(begin + kChunkSize, count);
+  handles.reserve((count - warmup + chunk - 1) / chunk);
+  for (size_t begin = warmup; begin < count; begin += chunk) {
+    const size_t end = std::min(begin + chunk, count);
     // submit_h gives handles so the wait below is scoped to this batch only
     // (a bare ffrt::wait would also block on unrelated ArkUI FFRT tasks).
     handles.push_back(ffrt::submit_h([=] {
