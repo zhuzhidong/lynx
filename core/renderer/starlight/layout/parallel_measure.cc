@@ -24,7 +24,15 @@ bool ParallelMeasureIndices(size_t count, size_t threshold,
 
   // ffrt-parallelization: font-cache warm-up. Run the first few measurements
   // on the calling thread (typically TASM) before dispatching to FFRT
-  // workers. Text measurement cold-starts the Skia font manager (loading
+  // workers.
+  //
+  // Mode notes (measured on P9): MOST_ON_TASM gives the real win (measure
+  // phase -39.5% on a realistic article page, first frame -9.9% on the
+  // text-stress workload). In ALL_ON_UI, definite-main-axis pages (e.g.
+  // text-stress) never enter here (the whitelist requires an indefinite
+  // main axis); indefinite-main-axis pages (article-style reading pages)
+  // DO dispatch from the UI thread and measure at break-even (21.4ms wait
+  // for 30 paragraph measures vs ~25ms serial) — no gain, no regression. Text measurement cold-starts the Skia font manager (loading
   // .ttf files, building glyph caches) behind internal locks — when 16
   // workers hit this simultaneously they serialize on those locks, making
   // each measurement ~14x slower. Warming up a representative sample first
