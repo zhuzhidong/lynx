@@ -17,37 +17,37 @@
       "desc": "Text style 页冷启动加载 + 6 次上滑浏览(纯 <text> 节点密集,验证 TextShadowNode 测量路径)"
     },
     "mall-stress": {
-      "command": "python3 autotest/page_scroll.py {sn} {report_dir} http://127.0.0.1:8788/main.lynx.bundle",
+      "command": "python3 autotest/page_scroll.py {sn} {report_dir} http://127.0.0.1:8789/stress-mall/dist/main.lynx.bundle",
       "rounds": 1,
       "timeout_s": 300,
       "desc": "商城瀑布流压力页(自建,双列瀑布流+图片+入场动画+无限滚动至 2000 卡片;HTTP 经 hdc rport 反向转发)"
     },
     "text-stress": {
-      "command": "python3 autotest/page_scroll.py {sn} {report_dir} http://127.0.0.1:8789/main.lynx.bundle",
+      "command": "python3 autotest/page_scroll.py {sn} {report_dir} http://127.0.0.1:8789/stress-text/dist/main.lynx.bundle",
       "rounds": 1,
       "timeout_s": 300,
       "desc": "文本排版压力页(自建,scroll-view 静态渲染 2400 个混合样式 text 节点;HTTP 经 hdc rport 反向转发)"
     },
     "text-stress-tasm": {
-      "command": "python3 autotest/page_scroll.py {sn} {report_dir} 'http://127.0.0.1:8789/main.lynx.bundle?thread_mode=most_on_tasm'",
+      "command": "python3 autotest/page_scroll.py {sn} {report_dir} 'http://127.0.0.1:8789/stress-text/dist/main.lynx.bundle?thread_mode=most_on_tasm'",
       "rounds": 1,
       "timeout_s": 300,
       "desc": "文本压力页 + MOST_ON_TASM 引擎异步线程模式(FFRT 并行测量在 TASM 线程接线验证)"
     },
     "mall-stress-tasm": {
-      "command": "python3 autotest/page_scroll.py {sn} {report_dir} 'http://127.0.0.1:8788/main.lynx.bundle?thread_mode=most_on_tasm'",
+      "command": "python3 autotest/page_scroll.py {sn} {report_dir} 'http://127.0.0.1:8789/stress-mall/dist/main.lynx.bundle?thread_mode=most_on_tasm'",
       "rounds": 1,
       "timeout_s": 300,
       "desc": "商城瀑布流页 + MOST_ON_TASM 引擎异步线程模式"
     },
     "article-reader-tasm": {
-      "command": "python3 autotest/page_scroll.py {sn} {report_dir} 'http://127.0.0.1:8790/main.lynx.bundle?thread_mode=most_on_tasm'",
+      "command": "python3 autotest/page_scroll.py {sn} {report_dir} 'http://127.0.0.1:8789/article-reader/dist/main.lynx.bundle?thread_mode=most_on_tasm'",
       "rounds": 1,
       "timeout_s": 300,
       "desc": "真实文章阅读页(长文排版,~50 内容块)+ MOST_ON_TASM(Starlight 批量文本测量的真实场景)"
     },
     "article-reader": {
-      "command": "python3 autotest/page_scroll.py {sn} {report_dir} 'http://127.0.0.1:8790/main.lynx.bundle'",
+      "command": "python3 autotest/page_scroll.py {sn} {report_dir} 'http://127.0.0.1:8789/article-reader/dist/main.lynx.bundle'",
       "rounds": 1,
       "timeout_s": 300,
       "desc": "真实文章阅读页 + 默认 ALL_ON_UI(零劣化检查)"
