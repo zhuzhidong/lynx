@@ -74,6 +74,9 @@ class GridLayoutAlgorithm : public LayoutAlgorithm {
   static void GridMeasureThunk(void* ctx, size_t idx);
   void GridMeasureOneItem(MeasureItemCache& item_size_infos, size_t idx,
                           bool block_axis_pass);
+  // Final grid measure at resolved track sizes (per-item, no shared state).
+  void GridMeasureItemFinal(size_t idx);
+  static void GridFinalMeasureThunk(void* ctx, size_t idx);
   // Scratch state for the dispatching thunk (set around the parallel call,
   // nullptr otherwise — see MeasureGridItemsInParallel).
   MeasureItemCache* parallel_measure_cache_{nullptr};

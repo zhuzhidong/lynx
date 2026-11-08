@@ -1985,43 +1985,61 @@ void GridLayoutAlgorithm::UpdateContainerSize(Dimension dimension,
 }
 
 void GridLayoutAlgorithm::MeasureGridItems() {
-  for (const GridItemInfo& item_info : grid_item_infos_) {
-    auto* child = item_info.Item();
-    auto* child_style = child->GetCSSStyle();
-
-    const Constraints& container_constraints = item_info.ContainingBlock();
-    auto child_constraints = property_utils::GenerateDefaultConstraints(
-        *child, container_constraints);
-
-    if (IsSLAtMostMode(child_constraints[BlockAxis()].Mode()) &&
-        ((child_style->GetAlignSelf() == FlexAlignType::kAuto &&
-          container_style_->GetAlignItems() == FlexAlignType::kStretch) ||
-         (child_style->GetAlignSelf() == FlexAlignType::kStretch))) {
-      if (!GetMargin(child_style, BlockFront()).IsAuto() &&
-          !GetMargin(child_style, BlockBack()).IsAuto()) {
-        child_constraints[BlockAxis()] =
-            OneSideConstraint::Definite(child_constraints[BlockAxis()].Size());
-      }
+  // ffrt-parallelization (P1 extension to grid, final pass): each iteration
+  // only reads its own item's resolved containing block and writes its own
+  // child — no shared state at all. Dispatch to FFRT workers for large
+  // grids; small grids keep the serial loop.
+  constexpr size_t kParallelMeasureThreshold = 8;
+  if (!starlight::ParallelMeasureIndices(
+          grid_item_infos_.size(), kParallelMeasureThreshold,
+          &GridLayoutAlgorithm::GridFinalMeasureThunk, this)) {
+    for (size_t idx = 0; idx < grid_item_infos_.size(); ++idx) {
+      GridMeasureItemFinal(idx);
     }
-
-    if (IsSLAtMostMode(child_constraints[InlineAxis()].Mode()) &&
-        ((child_style->GetJustifySelfType() == JustifyType::kAuto &&
-          container_style_->GetJustifyItemsType() == JustifyType::kStretch) ||
-         (child_style->GetJustifySelfType() == JustifyType::kStretch))) {
-      if (!GetMargin(child_style, InlineFront()).IsAuto() &&
-          !GetMargin(child_style, InlineBack()).IsAuto()) {
-        child_constraints[InlineAxis()] =
-            OneSideConstraint::Definite(child_constraints[InlineAxis()].Size());
-      }
-    }
-
-    child->UpdateMeasure(child_constraints, true);
-    //  resolve margin auto
-    ResolveAutoMargins(child, container_constraints[InlineAxis()].Size(),
-                       InlineAxis());
-    ResolveAutoMargins(child, container_constraints[BlockAxis()].Size(),
-                       BlockAxis());
   }
+}
+
+void GridLayoutAlgorithm::GridMeasureItemFinal(size_t idx) {
+  const GridItemInfo& item_info = grid_item_infos_[idx];
+  auto* child = item_info.Item();
+  auto* child_style = child->GetCSSStyle();
+
+  const Constraints& container_constraints = item_info.ContainingBlock();
+  auto child_constraints = property_utils::GenerateDefaultConstraints(
+      *child, container_constraints);
+
+  if (IsSLAtMostMode(child_constraints[BlockAxis()].Mode()) &&
+      ((child_style->GetAlignSelf() == FlexAlignType::kAuto &&
+        container_style_->GetAlignItems() == FlexAlignType::kStretch) ||
+       (child_style->GetAlignSelf() == FlexAlignType::kStretch))) {
+    if (!GetMargin(child_style, BlockFront()).IsAuto() &&
+        !GetMargin(child_style, BlockBack()).IsAuto()) {
+      child_constraints[BlockAxis()] =
+          OneSideConstraint::Definite(child_constraints[BlockAxis()].Size());
+    }
+  }
+
+  if (IsSLAtMostMode(child_constraints[InlineAxis()].Mode()) &&
+      ((child_style->GetJustifySelfType() == JustifyType::kAuto &&
+        container_style_->GetJustifyItemsType() == JustifyType::kStretch) ||
+       (child_style->GetJustifySelfType() == JustifyType::kStretch))) {
+    if (!GetMargin(child_style, InlineFront()).IsAuto() &&
+        !GetMargin(child_style, InlineBack()).IsAuto()) {
+      child_constraints[InlineAxis()] =
+          OneSideConstraint::Definite(child_constraints[InlineAxis()].Size());
+    }
+  }
+
+  child->UpdateMeasure(child_constraints, true);
+  //  resolve margin auto
+  ResolveAutoMargins(child, container_constraints[InlineAxis()].Size(),
+                     InlineAxis());
+  ResolveAutoMargins(child, container_constraints[BlockAxis()].Size(),
+                     BlockAxis());
+}
+
+void GridLayoutAlgorithm::GridFinalMeasureThunk(void* ctx, size_t idx) {
+  static_cast<GridLayoutAlgorithm*>(ctx)->GridMeasureItemFinal(idx);
 }
 
 float GridLayoutAlgorithm::GridTrackCount(Dimension dimension) const {
