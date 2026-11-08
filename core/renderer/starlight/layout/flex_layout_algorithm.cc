@@ -3,6 +3,7 @@
 // LICENSE file in the root directory of this source tree.
 
 #include "core/renderer/starlight/layout/flex_layout_algorithm.h"
+#include "core/renderer/starlight/layout/parallel_measure.h"
 
 #include <math.h>
 
@@ -85,12 +86,16 @@ void FlexLayoutAlgorithm::AlignInFlowItems() {
  * Determine the flex base size and hypothetical main size of each item:*/
 float FlexLayoutAlgorithm::DetermineFlexBaseSizeAndHypotheticalMainSize() {
   auto& base_size = flex_info_.flex_base_size_;
-  for (size_t idx = 0; idx < inflow_items_.size(); ++idx) {
-    LayoutObject* item = inflow_items_[idx];
-    if (base::FloatsEqual(base_size[idx], 0.0f)) {
-      base_size[idx] = ChildCalculateFlexBasis(static_cast<int32_t>(idx));
+  if (!MeasureFlexBasesInParallel()) {
+    for (size_t idx = 0; idx < inflow_items_.size(); ++idx) {
+      if (base::FloatsEqual(base_size[idx], 0.0f)) {
+        base_size[idx] = ChildCalculateFlexBasis(static_cast<int32_t>(idx));
+      }
     }
-
+  }
+  // Grow/shrink flags are cheap style reads; keep the scan serial so the
+  // parallel thunks stay free of shared writes.
+  for (const auto* item : inflow_items_) {
     if (item->GetCSSStyle()->GetFlexGrow() != 0)
       flex_info_.has_item_flex_grow_ = 1;
     if (item->GetCSSStyle()->GetFlexShrink() != 0)
@@ -108,6 +113,26 @@ float FlexLayoutAlgorithm::DetermineFlexBaseSizeAndHypotheticalMainSize() {
         flex_info_.main_gap_size_ * (inflow_items_.size() - 1);
   }
   return total_hypothetical_size;
+}
+
+// ffrt-parallelization (point P1 extension to flex): every iteration only
+// writes its own result slot (flex_base_size_[idx]) and reads child style
+// plus container constraints, so sibling measurements are independent —
+// same contract as the linear algorithm's parallel child measure. Any miss
+// (other platforms, small lists) falls back to the serial loop above.
+bool FlexLayoutAlgorithm::MeasureFlexBasesInParallel() {
+  constexpr size_t kParallelMeasureThreshold = 8;
+  return starlight::ParallelMeasureIndices(
+      inflow_items_.size(), kParallelMeasureThreshold,
+      &FlexLayoutAlgorithm::FlexMeasureThunk, this);
+}
+
+void FlexLayoutAlgorithm::FlexMeasureThunk(void* ctx, size_t idx) {
+  auto* self = static_cast<FlexLayoutAlgorithm*>(ctx);
+  auto& base_size = self->flex_info_.flex_base_size_;
+  if (base::FloatsEqual(base_size[idx], 0.0f)) {
+    base_size[idx] = self->ChildCalculateFlexBasis(static_cast<int32_t>(idx));
+  }
 }
 
 float FlexLayoutAlgorithm::ChildCalculateFlexBasis(int32_t idx) {

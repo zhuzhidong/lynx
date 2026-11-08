@@ -37,6 +37,12 @@ class FlexLayoutAlgorithm : public LayoutAlgorithm {
   float DetermineFlexBaseSizeAndHypotheticalMainSize();
   float ChildCalculateFlexBasis(int32_t idx);
 
+  // ffrt-parallelization (point P1 extension to flex): the per-item flex
+  // base measurement is sibling-independent (per-index slot writes only),
+  // so large lists dispatch to FFRT workers; small lists stay serial.
+  bool MeasureFlexBasesInParallel();
+  static void FlexMeasureThunk(void* ctx, size_t idx);
+
   // Algorithm-4 Calculate the main size of the flex container and collect flex
   // items into flex lines
   float CalculateFlexContainerMainSize(float total_hypothetical_main_size);
