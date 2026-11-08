@@ -1,0 +1,48 @@
+{
+  "schema": "scenario-driver/v1",
+  "bundle": "org.lynxjs.explorer",
+  "ability": "EntryAbility",
+  "mode": "script",
+  "variants": {
+    "markdown-scroll": {
+      "command": "python3 autotest/page_scroll.py {sn} {report_dir} file://lynx?local://showcase/markdown/basic.lynx.bundle",
+      "rounds": 1,
+      "timeout_s": 300,
+      "desc": "Markdown basic 页冷启动加载 + 6 次上滑浏览(serval 排版 + 滚动压力)"
+    },
+    "text-scroll": {
+      "command": "python3 autotest/page_scroll.py {sn} {report_dir} file://lynx?local://showcase/text/text_style.lynx.bundle",
+      "rounds": 1,
+      "timeout_s": 300,
+      "desc": "Text style 页冷启动加载 + 6 次上滑浏览(纯 <text> 节点密集,验证 TextShadowNode 测量路径)"
+    },
+    "mall-stress": {
+      "command": "python3 autotest/page_scroll.py {sn} {report_dir} http://127.0.0.1:8788/main.lynx.bundle",
+      "rounds": 1,
+      "timeout_s": 300,
+      "desc": "商城瀑布流压力页(自建,双列瀑布流+图片+入场动画+无限滚动至 2000 卡片;HTTP 经 hdc rport 反向转发)"
+    },
+    "text-stress": {
+      "command": "python3 autotest/page_scroll.py {sn} {report_dir} http://127.0.0.1:8789/main.lynx.bundle",
+      "rounds": 1,
+      "timeout_s": 300,
+      "desc": "文本排版压力页(自建,scroll-view 静态渲染 2400 个混合样式 text 节点;HTTP 经 hdc rport 反向转发)"
+    },
+    "text-stress-tasm": {
+      "command": "python3 autotest/page_scroll.py {sn} {report_dir} 'http://127.0.0.1:8789/main.lynx.bundle?thread_mode=most_on_tasm'",
+      "rounds": 1,
+      "timeout_s": 300,
+      "desc": "文本压力页 + MOST_ON_TASM 引擎异步线程模式(FFRT 并行测量在 TASM 线程接线验证)"
+    },
+    "mall-stress-tasm": {
+      "command": "python3 autotest/page_scroll.py {sn} {report_dir} 'http://127.0.0.1:8788/main.lynx.bundle?thread_mode=most_on_tasm'",
+      "rounds": 1,
+      "timeout_s": 300,
+      "desc": "商城瀑布流页 + MOST_ON_TASM 引擎异步线程模式"
+    }
+  },
+  "lifecycle": {
+    "cold_start": "scenario",
+    "force_stop_after": true
+  }
+}

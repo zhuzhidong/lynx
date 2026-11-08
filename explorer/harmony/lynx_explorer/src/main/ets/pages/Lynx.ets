@@ -21,6 +21,7 @@ import {
   LynxTemplateResourceFetcher,
   LynxView,
   MetaData,
+  ThreadStrategyForRendering,
   ModuleClassWrapper,
   SendableModuleClassWrapper,
   TemplateData
@@ -85,6 +86,10 @@ struct Lynx {
   private nodeAPIToken: LynxNodeAPIToken = new LynxNodeAPIToken();
   private backgroundRuntime?: LynxBackgroundRuntime;
   private enableNapiAddon: boolean = false;
+  // ffrt-parallelization: thread strategy override via URL query
+  // (?thread_mode=most_on_tasm / multi_threads / part_on_layout).
+  private threadMode: ThreadStrategyForRendering =
+      ThreadStrategyForRendering.ALL_ON_UI;
   private lynxContext?: LynxContext;
 
   @State testButtons: LynxTestButton[] = [];
@@ -136,6 +141,10 @@ struct Lynx {
       }
       let enableNapiAddon = queryParams.get('enable_napi_addon');
       this.enableNapiAddon = enableNapiAddon === '1' || enableNapiAddon === 'true';
+      let threadMode = queryParams.get('thread_mode');
+      if (threadMode === 'most_on_tasm') {
+        this.threadMode = ThreadStrategyForRendering.MOST_ON_TASM;
+      }
     } catch (e) {
       LLog.e(TAG, `url ${this.url} parsed failed: ${e}`);
     }
@@ -195,6 +204,7 @@ struct Lynx {
           sendableModules: this.sendableModules,
           behaviors: this.behaviors,
           metaData: this.metaData,
+          threadMode: this.threadMode,
           onCreate: (context: LynxContext) => {
             this.lynxContext = context;
             context.updateColorScheme(this.getColorScheme());
