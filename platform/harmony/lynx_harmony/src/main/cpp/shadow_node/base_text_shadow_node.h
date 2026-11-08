@@ -30,6 +30,9 @@ class BaseTextShadowNode : public ShadowNode, public ParagraphContent {
   ~BaseTextShadowNode() override = default;
   virtual bool IsRawText() const { return false; }
   virtual bool IsInlineTruncation() const { return false; }
+  // ffrt-parallelization iteration 2 (point P1): re-snapshot the enclosing
+  // TextShadowNode after this node is attached into a text tree.
+  void OnInsertedIntoTextTree() override;
 
   /**
    *
@@ -104,6 +107,12 @@ class BaseTextShadowNode : public ShadowNode, public ParagraphContent {
   std::vector<std::string> raw_font_families_;
   void SetTextShadow(const lepus::Value& shadow);
   void SetColor(const lepus::Value& color);
+  // ffrt-parallelization iteration 2 (point P1): bump the enclosing
+  // TextShadowNode's pre-measure generation after a content update and
+  // re-enqueue a fresh snapshot.
+  void InvalidateAncestorPreMeasure();
+  // Returns the outermost enclosing TextShadowNode, if any.
+  ShadowNode* FindTopTextShadowNode() const;
 };
 
 }  // namespace harmony

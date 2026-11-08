@@ -5,6 +5,8 @@
 #ifndef PLATFORM_HARMONY_LYNX_HARMONY_SRC_MAIN_CPP_UI_BASE_NODE_MANAGER_H_
 #define PLATFORM_HARMONY_LYNX_HARMONY_SRC_MAIN_CPP_UI_BASE_NODE_MANAGER_H_
 
+#include <atomic>
+#include <thread>
 #include <arkui/native_dialog.h>
 #include <arkui/native_gesture.h>
 #include <arkui/native_interface.h>
@@ -67,6 +69,10 @@ class BASE_EXPORT NodeManager {
   }
 
   LYNX_EXPORT ArkUI_NodeHandle CreateNode(ArkUI_NodeType type);
+  // ffrt-parallelization: true when the calling thread is the ArkUI
+  // UI thread (CAPI measure from other threads bounces back).
+  bool IsCurrentThreadUIThread() const { return is_ui_thread_ready_ && std::this_thread::get_id() == ui_thread_id_; }
+  void RecordUIThread() { ui_thread_id_ = std::this_thread::get_id(); is_ui_thread_ready_ = true; }
   LYNX_EXPORT void DisposeNode(ArkUI_NodeHandle node);
   LYNX_EXPORT bool SetAttribute(ArkUI_NodeHandle node,
                                 ArkUI_NodeAttributeType type,
@@ -229,6 +235,9 @@ class BASE_EXPORT NodeManager {
   }
 
  private:
+  std::thread::id ui_thread_id_{};
+  std::atomic<bool> is_ui_thread_ready_{false};
+
   LYNX_EXPORT NodeManager();
   template <typename T>
   ArkUI_NumberValue NumberValue(T val) {

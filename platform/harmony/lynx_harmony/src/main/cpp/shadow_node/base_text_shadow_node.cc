@@ -18,6 +18,7 @@
 #include "platform/harmony/lynx_harmony/src/main/cpp/font/font_face_manager.h"
 #include "platform/harmony/lynx_harmony/src/main/cpp/lynx_context.h"
 #include "platform/harmony/lynx_harmony/src/main/cpp/shadow_node/raw_text_shadow_node.h"
+#include "platform/harmony/lynx_harmony/src/main/cpp/shadow_node/text_shadow_node.h"
 #include "platform/harmony/lynx_harmony/src/main/cpp/shadow_node/shadow_node_owner.h"
 #include "platform/harmony/lynx_harmony/src/main/cpp/ui/background/background_conic_gradient_layer.h"
 #include "platform/harmony/lynx_harmony/src/main/cpp/ui/background/background_linear_gradient_layer.h"
@@ -114,6 +115,58 @@ void BaseTextShadowNode::OnPropsUpdate(const std::string& name,
     ShadowNode::OnPropsUpdate(name, value);
   }
   MarkDirty();
+  // ffrt-parallelization iteration 2 (point P1): a text descendant update
+  // invalidates the enclosing TextShadowNode's pre-measured paragraph and
+  // re-enqueues a fresh snapshot with the now-complete content.
+  InvalidateAncestorPreMeasure();
+}
+
+void BaseTextShadowNode::InvalidateAncestorPreMeasure() {
+  auto* owner = GetOwner();
+  if (!owner) {
+    return;
+  }
+  ShadowNode* top_text = FindTopTextShadowNode();
+  if (top_text == nullptr) {
+    return;
+  }
+  auto* text = static_cast<TextShadowNode*>(top_text);
+  // Always bump: content changed, so any stored pre-measure must miss even
+  // when the re-enqueue below is skipped by its guards.
+  text->BumpPreMeasureGeneration();
+  text->MaybeEnqueuePreMeasure();
+}
+
+void BaseTextShadowNode::OnInsertedIntoTextTree() {
+  auto* owner = GetOwner();
+  if (!owner) {
+    return;
+  }
+  ShadowNode* top_text = FindTopTextShadowNode();
+  if (top_text == nullptr) {
+    return;
+  }
+  // Content may have arrived before attach; after attach a later update
+  // re-enqueues via InvalidateAncestorPreMeasure.
+  static_cast<TextShadowNode*>(top_text)->MaybeEnqueuePreMeasure();
+}
+
+ShadowNode* BaseTextShadowNode::FindTopTextShadowNode() const {
+  ShadowNode* top_text = nullptr;
+  int32_t sign = GetParentSign();
+  while (sign != -1) {
+    ShadowNode* node = GetOwner()->FindShadowNodeBySign(sign);
+    if (!node) {
+      break;
+    }
+    if (node->IsTextShadowNode()) {
+      // Keep climbing: the paragraph is assembled at the outermost text
+      // node, which is the one holding the pre-measured snapshot.
+      top_text = node;
+    }
+    sign = node->GetParentSign();
+  }
+  return top_text;
 }
 
 void BaseTextShadowNode::SetCustomFontFamiliesToStyle() {

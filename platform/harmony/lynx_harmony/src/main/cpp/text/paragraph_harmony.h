@@ -6,6 +6,7 @@
 #define PLATFORM_HARMONY_LYNX_HARMONY_SRC_MAIN_CPP_TEXT_PARAGRAPH_HARMONY_H_
 
 #include <native_drawing/drawing_text_typography.h>
+#include "base/include/trace/ffrt_profiling.h"
 
 #include <cstdint>
 #include <limits>
@@ -17,6 +18,7 @@
 #include <vector>
 
 #include "base/include/fml/memory/ref_counted.h"
+#include "hitrace/trace.h"
 #include "platform/harmony/lynx_harmony/src/main/cpp/text/font_collection_harmony.h"
 #include "platform/harmony/lynx_harmony/src/main/cpp/text/line_harmony.h"
 #include "platform/harmony/lynx_harmony/src/main/cpp/text/style_harmony.h"
@@ -108,7 +110,10 @@ class ParagraphHarmony : public fml::RefCountedThreadSafeStorage {
   OH_Drawing_Typography* GetRawStruct() const { return paragraph_; }
 
   void Layout(double max_width) const {
+    // FFRT profiling marker (ffrt-parallelization Stage 2): candidate point P1
+    if (lynx::base::IsFFRTProfilingEnabled()) OH_HiTrace_StartTrace("FFRT_P1_TypographyLayout");
     OH_Drawing_TypographyLayout(paragraph_, max_width);
+    if (lynx::base::IsFFRTProfilingEnabled()) OH_HiTrace_FinishTrace();
     //    line_metrics_ = OH_Drawing_TypographyGetLineMetrics(paragraph_);
   }
 

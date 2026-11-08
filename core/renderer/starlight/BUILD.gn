@@ -35,6 +35,8 @@ starlight_layout_sources = [
   "layout/layout_object.h",
   "layout/linear_layout_algorithm.cc",
   "layout/linear_layout_algorithm.h",
+  "layout/parallel_measure.cc",
+  "layout/parallel_measure.h",
   "layout/logic_direction_utils.cc",
   "layout/logic_direction_utils.h",
   "layout/node.h",
@@ -95,8 +97,24 @@ starlight_event_sources = [
 ]
 
 config("starlight_private_config") {
-  include_dirs = []
-  defines = []
+  # ffrt-parallelization: FFRT C++ headers come from the @ppd/ffrt ohpm
+  # package (declared in lynx_harmony oh-package.json5, installed into the
+  # module oh_modules) for the harmony parallel child-measure helper.
+  # OS_HARMONY is not defined for core targets, so the gate is its own
+  # define set only on harmony builds.
+  if (is_harmony) {
+    include_dirs = [
+      "../../../platform/harmony/lynx_harmony/oh_modules/@ppd/ffrt/include",
+    ]
+    # ffrt-parallelization: re-armed for the MOST_ON_TASM experiment —
+    # under the async-engine thread strategy the TASM-side layout loops run
+    # on the TASM thread where FFRT parallel children measurement applies
+    # (the ALL_ON_UI bounce-back finding does not apply there).
+    defines = [ "LYNX_STARLIGHT_FFRT_PARALLEL" ]
+  } else {
+    include_dirs = []
+    defines = []
+  }
   cflags = []
   cflags_c = []
   cflags_cc = []

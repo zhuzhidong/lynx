@@ -3,6 +3,7 @@
 // LICENSE file in the root directory of this source tree.
 
 #include "platform/harmony/lynx_harmony/src/main/cpp/lynx_template_renderer.h"
+#include "base/include/trace/ffrt_profiling.h"
 
 #include <js_native_api.h>
 
@@ -60,10 +61,18 @@
 #include "core/services/replay/testbench_utils_embedder.h"
 #endif
 
+#include "hitrace/trace.h"
+
 namespace lynx {
 namespace harmony {
 
 namespace {
+
+// FFRT profiling marker RAII guard (ffrt-parallelization Stage 2).
+struct FfrtHiTraceScope {
+  explicit FfrtHiTraceScope(const char* name) { OH_HiTrace_StartTrace(name); }
+  ~FfrtHiTraceScope() { if (lynx::base::IsFFRTProfilingEnabled()) OH_HiTrace_FinishTrace(); }
+};
 
 // Check napi_unwrap object, print error message if failed.
 // Do not throw if failed because we have not defined the exceptions for js api.
@@ -355,6 +364,8 @@ void LynxTemplateRenderer::SetUpLynxShell(
       shell_->GetRunners()->GetUITaskRunner(),
       shell_->GetRunners()->GetLayoutTaskRunner(), shell_->GetInstanceId(),
       shell_->GetPageOptions().IsEmbeddedModeOn());
+  LOGI("ffrt-parallelization: LynxTemplateRenderer thread_mode = "
+       << thread_mode);
   tasm::report::EventTracker::UpdateGenericInfo(
       GetInstanceId(), tasm::report::harmony::kPropThreadMode,
       static_cast<int64_t>(thread_mode));
@@ -2059,6 +2070,8 @@ napi_value LynxTemplateRenderer::SendCustomEvent(napi_env env,
 
 napi_value LynxTemplateRenderer::ScrollByListContainer(
     napi_env env, napi_callback_info info) {
+  // FFRT profiling marker (ffrt-parallelization Stage 2): candidate point P8
+  FfrtHiTraceScope ffrt_p8_scope{"FFRT_P8_ScrollByListContainer"};
   napi_value js_this;
   size_t argc = 5;
   napi_value args[5] = {nullptr};

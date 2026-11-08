@@ -3,6 +3,7 @@
 // LICENSE file in the root directory of this source tree.
 
 #include "platform/harmony/lynx_harmony/src/main/cpp/ui/base/node_manager.h"
+#include "base/include/trace/ffrt_profiling.h"
 
 #include <ace/xcomponent/native_interface_xcomponent.h>
 #include <deviceinfo.h>
@@ -11,6 +12,7 @@
 #include <utility>
 
 #include "base/trace/native/trace_event.h"
+#include "hitrace/trace.h"
 #include "core/base/harmony/harmony_trace_event_def.h"
 #include "platform/harmony/lynx_harmony/src/main/cpp/event/event_dispatcher.h"
 namespace lynx {
@@ -29,13 +31,21 @@ NodeManager::NodeManager() {
 }
 
 ArkUI_NodeHandle NodeManager::CreateNode(ArkUI_NodeType type) {
-  return native_node_api_->createNode(type);
+  // ffrt-parallelization diagnostics: ArkUI node creation cost.
+  if (lynx::base::IsFFRTProfilingEnabled()) OH_HiTrace_StartTrace("FFRT_N_CreateNode");
+  ArkUI_NodeHandle h = native_node_api_->createNode(type);
+  if (lynx::base::IsFFRTProfilingEnabled()) OH_HiTrace_FinishTrace();
+  return h;
 }
 
 bool NodeManager::SetAttribute(ArkUI_NodeHandle node,
                                ArkUI_NodeAttributeType type,
                                const ArkUI_AttributeItem* item) {
-  return native_node_api_->setAttribute(node, type, item) == 0;
+  // ffrt-parallelization diagnostics: ArkUI attribute cost.
+  if (lynx::base::IsFFRTProfilingEnabled()) OH_HiTrace_StartTrace("FFRT_N_SetAttribute");
+  int32_t ret = native_node_api_->setAttribute(node, type, item);
+  if (lynx::base::IsFFRTProfilingEnabled()) OH_HiTrace_FinishTrace();
+  return ret == 0;
 }
 
 const ArkUI_AttributeItem* NodeManager::GetAttribute(

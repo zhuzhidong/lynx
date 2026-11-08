@@ -42,6 +42,16 @@ class LinearLayoutAlgorithm : public LayoutAlgorithm {
 
   void LayoutWeightedChildren(const InlineFloatArray& base_sizes);
 
+  // ffrt-parallelization iteration 3 (point P1): measure children in
+  // parallel via the platform helper (see layout/parallel_measure.h) when
+  // the whitelist conditions hold; returns false when the caller must run
+  // the original serial loop.
+  bool MeasureChildrenInParallel(InlineFloatArray& bases);
+  static void ParallelMeasureThunk(void* ctx, size_t idx);
+  // Scratch pointer to the caller's bases array while the parallel thunk
+  // runs (see MeasureChildrenInParallel).
+  InlineFloatArray* parallel_bases_{nullptr};
+
   void InitializeAlgorithmEnv() override;
 
   virtual void UpdateContainerSize();

@@ -141,6 +141,11 @@ void ShadowNodeOwner::InsertLayoutNode(int parent, int child, int index) {
     index = parent_node->GetChildren().size();
   }
   parent_node->AddChild(child_it->second.get(), index);
+  // ffrt-parallelization iteration 2 (point P1): a text descendant was
+  // attached — re-snapshot the enclosing TextShadowNode if the child was
+  // populated before attach (content updates after attach re-enqueue from
+  // BaseTextShadowNode::OnPropsUpdate).
+  child_it->second->OnInsertedIntoTextTree();
 }
 
 void ShadowNodeOwner::RemoveLayoutNode(int parent, int child, int index) {

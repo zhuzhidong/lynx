@@ -2,6 +2,7 @@
 // Licensed under the Apache License Version 2.0 that can be found in the
 // LICENSE file in the root directory of this source tree.
 
+#include "base/include/trace/ffrt_profiling.h"
 #include "core/renderer/starlight/layout/compose_row_column_layout_algorithm.h"
 
 #include <algorithm>
@@ -9,6 +10,8 @@
 
 #include "core/renderer/starlight/layout/layout_object.h"
 #include "core/renderer/starlight/layout/logic_direction_utils.h"
+#include "core/renderer/starlight/layout/parallel_measure.h"
+#include "hitrace/trace.h"
 
 namespace lynx {
 namespace starlight {
@@ -45,12 +48,14 @@ void ComposeRowColumnLayoutAlgorithm::InitializeAlgorithmEnv() {
 }
 
 void ComposeRowColumnLayoutAlgorithm::SizeDeterminationByAlgorithm() {
+  if (lynx::base::IsFFRTProfilingEnabled()) OH_HiTrace_StartTrace("FFRT_L_ComposeSDBA");
   const auto size = MeasureChildren();
   container_constraints_[kHorizontal] = OneSideConstraint::Definite(
       compose_constraints_->ConstrainWidth(size.width_));
   container_constraints_[kVertical] = OneSideConstraint::Definite(
       compose_constraints_->ConstrainHeight(size.height_));
   ArrangeChildren();
+  if (lynx::base::IsFFRTProfilingEnabled()) OH_HiTrace_FinishTrace();
 }
 
 void ComposeRowColumnLayoutAlgorithm::SetContainerBaseline() {
@@ -68,7 +73,52 @@ void ComposeRowColumnLayoutAlgorithm::MeasureChild(size_t index, float main_min,
           constraints, container_->GetFinalMeasure());
 }
 
+bool ComposeRowColumnLayoutAlgorithm::MeasureChildrenInParallel(
+    float main_max, float cross_max) {
+  // Whitelist: an unbounded main axis (native scrolling) makes every child's
+  // (0, main_max, cross_max) constraint identical and sibling-independent;
+  // weighted children are excluded because the weighted pass depends on the
+  // running total.
+  if (std::isfinite(main_max)) {
+    if (lynx::base::IsFFRTProfilingEnabled()) OH_HiTrace_StartTrace("FFRT_P1_CDeclineFinite");
+    // (spin removed: markers now gated at runtime)
+    if (lynx::base::IsFFRTProfilingEnabled()) OH_HiTrace_FinishTrace();
+    return false;
+  }
+  for (const auto* item : inflow_items_) {
+    if (item->GetCSSStyle()->GetLinearWeight() > 0) {
+      if (lynx::base::IsFFRTProfilingEnabled()) OH_HiTrace_StartTrace("FFRT_P1_CDeclineWeight");
+      // (spin removed: markers now gated at runtime)
+      if (lynx::base::IsFFRTProfilingEnabled()) OH_HiTrace_FinishTrace();
+      return false;
+    }
+  }
+  if (lynx::base::IsFFRTProfilingEnabled()) OH_HiTrace_StartTrace("FFRT_P1_CParallel");
+  // (spin removed: markers now gated at runtime)
+  if (lynx::base::IsFFRTProfilingEnabled()) OH_HiTrace_FinishTrace();
+  // Keep the serial loop for small lists: FFRT scheduling overhead would
+  // dominate.
+  constexpr size_t kParallelMeasureThreshold = 8;
+  parallel_main_max_ = main_max;
+  parallel_cross_max_ = cross_max;
+  const bool ran = ParallelMeasureIndices(
+      children_.size(), kParallelMeasureThreshold,
+      &ComposeRowColumnLayoutAlgorithm::ParallelMeasureThunk, this);
+  parallel_main_max_ = 0;
+  parallel_cross_max_ = 0;
+  return ran;
+}
+
+void ComposeRowColumnLayoutAlgorithm::ParallelMeasureThunk(void* ctx,
+                                                           size_t idx) {
+  auto* self = static_cast<ComposeRowColumnLayoutAlgorithm*>(ctx);
+  self->MeasureChild(idx, 0, self->parallel_main_max_,
+                     self->parallel_cross_max_);
+}
+
 FloatSize ComposeRowColumnLayoutAlgorithm::MeasureChildren() {
+  // ffrt-parallelization diagnostics (iteration 3): which branch ran.
+  if (lynx::base::IsFFRTProfilingEnabled()) OH_HiTrace_StartTrace("FFRT_P1_CRun");
   const auto& constraints = *compose_constraints_;
   const float main_min =
       IsHorizontal() ? constraints.min_width : constraints.min_height;
@@ -90,17 +140,34 @@ FloatSize ComposeRowColumnLayoutAlgorithm::MeasureChildren() {
 
   // RowColumnMeasurePolicy.measure: nonweighted children consume the remaining
   // maximum in source order. A weighted child is not measured in this pass.
-  for (size_t i = 0; i < children_.size(); ++i) {
-    const float weight = inflow_items_[i]->GetCSSStyle()->GetLinearWeight();
-    if (weight > 0) {
-      total_weight += weight;
-      ++weighted_count;
-    } else {
-      const float remaining = main_max - fixed_space;
-      MeasureChild(i, 0, std::max(0.f, remaining), cross_max);
+  //
+  // ffrt-parallelization iteration 3 (point P1): when the main axis is
+  // unbounded (native scrolling unbinds it) and no child is weighted, every
+  // non-weighted child's constraints (0, main_max, cross_max) are identical
+  // and independent of sibling results — measure them in parallel on
+  // harmony. With an unbounded main axis the per-child spacing folds to the
+  // constant `spacing_` (remaining is infinite for every child); the
+  // post-loop `fixed_space -= last_spacing` below completes the totals.
+  if (MeasureChildrenInParallel(main_max, cross_max)) {
+    for (size_t i = 0; i < children_.size(); ++i) {
       const float size = SizeDimension(children_[i].size, MainAxis());
-      last_spacing = std::min(spacing_, std::max(0.f, remaining - size));
-      fixed_space += size + last_spacing;
+      fixed_space += size + spacing_;
+    }
+    last_spacing = spacing_;
+    // weighted_count is 0 on this path (see MeasureChildrenInParallel).
+  } else {
+    for (size_t i = 0; i < children_.size(); ++i) {
+      const float weight = inflow_items_[i]->GetCSSStyle()->GetLinearWeight();
+      if (weight > 0) {
+        total_weight += weight;
+        ++weighted_count;
+      } else {
+        const float remaining = main_max - fixed_space;
+        MeasureChild(i, 0, std::max(0.f, remaining), cross_max);
+        const float size = SizeDimension(children_[i].size, MainAxis());
+        last_spacing = std::min(spacing_, std::max(0.f, remaining - size));
+        fixed_space += size + last_spacing;
+      }
     }
   }
 
@@ -126,6 +193,7 @@ FloatSize ComposeRowColumnLayoutAlgorithm::MeasureChildren() {
                                             main_max - fixed_space));
   }
 
+  if (lynx::base::IsFFRTProfilingEnabled()) OH_HiTrace_FinishTrace();
   float cross_space = cross_min;
   float after_alignment_line = 0;
   for (size_t i = 0; i < children_.size(); ++i) {

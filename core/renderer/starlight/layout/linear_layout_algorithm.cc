@@ -2,6 +2,8 @@
 // Licensed under the Apache License Version 2.0 that can be found in the
 // LICENSE file in the root directory of this source tree.
 
+#include "hitrace/trace.h"
+#include "base/include/trace/ffrt_profiling.h"
 #include "core/renderer/starlight/layout/linear_layout_algorithm.h"
 
 #include <algorithm>
@@ -12,6 +14,7 @@
 #include "base/include/compiler_specific.h"
 #include "base/include/float_comparison.h"
 #include "core/renderer/starlight/layout/box_info.h"
+#include "core/renderer/starlight/layout/parallel_measure.h"
 #include "core/renderer/starlight/layout/elastic_layout_utils.h"
 #include "core/renderer/starlight/layout/layout_object.h"
 #include "core/renderer/starlight/layout/logic_direction_utils.h"
@@ -47,6 +50,7 @@ void LinearLayoutAlgorithm::SizeDeterminationByAlgorithm() {
  * Traverse each item once and measure the size.
  */
 void LinearLayoutAlgorithm::DetermineItemSize() {
+  if (lynx::base::IsFFRTProfilingEnabled()) OH_HiTrace_StartTrace("FFRT_L_DetermineItemSize");
   const float weight_sum = container_style_->GetLinearWeightSum();
   bool weight_enabled = true;
   if (container_->GetLayoutConfigs().IsFullQuirksMode()) {
@@ -55,19 +59,29 @@ void LinearLayoutAlgorithm::DetermineItemSize() {
   const size_t item_size = inflow_items_.size();
   InlineFloatArray bases(item_size, 0.f);
 
-  for (size_t idx = 0; idx < item_size; ++idx) {
-    if (base::FloatsLargerOrEqual(
-            0.0f, inflow_items_[idx]->GetCSSStyle()->GetLinearWeight()) ||
-        !weight_enabled ||
-        !IsSLDefiniteMode(container_constraints_[kMainAxis].Mode())) {
-      UpdateChildSize(idx);
-      bases[idx] = main_size_[idx];
+  // ffrt-parallelization iteration 3 (point P1): when no child carries a
+  // linear weight, every loop iteration writes only its own result slots
+  // (main_size_[idx] / cross_size_[idx] / bases[idx]) and sibling
+  // measurements are independent — run them in parallel on harmony when
+  // there are enough of them. Any miss (other platforms, small lists,
+  // weighted children) falls back to the original serial loop.
+  if (!MeasureChildrenInParallel(bases)) {
+    for (size_t idx = 0; idx < item_size; ++idx) {
+      if (base::FloatsLargerOrEqual(
+              0.0f, inflow_items_[idx]->GetCSSStyle()->GetLinearWeight()) ||
+          !weight_enabled ||
+          !IsSLDefiniteMode(container_constraints_[kMainAxis].Mode())) {
+        UpdateChildSize(idx);
+        bases[idx] = main_size_[idx];
+      }
     }
   }
   if (IsSLDefiniteMode(container_constraints_[kMainAxis].Mode()) &&
       weight_enabled) {
     LayoutWeightedChildren(bases);
   }
+  if (lynx::base::IsFFRTProfilingEnabled()) OH_HiTrace_FinishTrace();
+  if (lynx::base::IsFFRTProfilingEnabled()) OH_HiTrace_FinishTrace();
 
   for (size_t idx = 0; idx < item_size; ++idx) {
     const FourValue& margin = inflow_items_[idx]->GetBoxInfo()->margin_;
@@ -198,6 +212,34 @@ void LinearLayoutAlgorithm::UpdateChildSizeInternal(
 /*
  * Align items.
  */
+bool LinearLayoutAlgorithm::MeasureChildrenInParallel(
+    InlineFloatArray& bases) {
+  // Whitelist: no weighted children (the weighted path re-measures in a
+  // second pass and depends on the running total). With no weights, every
+  // child is measured exactly once with sibling-independent constraints,
+  // and the per-iteration writes land in per-index slots only.
+  for (const auto* item : inflow_items_) {
+    if (item->GetCSSStyle()->GetLinearWeight() > 0) {
+      return false;
+    }
+  }
+  // Keep the serial loop below for small lists: FFRT scheduling overhead
+  // would dominate.
+  constexpr size_t kParallelMeasureThreshold = 8;
+  parallel_bases_ = &bases;
+  const bool ran = starlight::ParallelMeasureIndices(
+      inflow_items_.size(), kParallelMeasureThreshold,
+      &LinearLayoutAlgorithm::ParallelMeasureThunk, this);
+  parallel_bases_ = nullptr;
+  return ran;
+}
+
+void LinearLayoutAlgorithm::ParallelMeasureThunk(void* ctx, size_t idx) {
+  auto* self = static_cast<LinearLayoutAlgorithm*>(ctx);
+  self->UpdateChildSize(idx);
+  (*self->parallel_bases_)[idx] = self->main_size_[idx];
+}
+
 void LinearLayoutAlgorithm::AlignInFlowItems() {
   if (inflow_items_.empty()) {
     return;

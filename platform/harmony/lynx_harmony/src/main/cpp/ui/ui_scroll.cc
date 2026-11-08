@@ -12,6 +12,7 @@
 #include "base/include/platform/harmony/harmony_vsync_manager.h"
 #include "base/include/string/string_utils.h"
 #include "base/trace/native/trace_event.h"
+#include "core/renderer/starlight/layout/parallel_measure.h"
 #include "core/base/harmony/harmony_trace_event_def.h"
 #include "core/renderer/dom/lynx_get_ui_result.h"
 #include "core/renderer/utils/value_utils.h"
@@ -231,6 +232,37 @@ void UIScroll::OnMeasure(ArkUI_LayoutConstraint* layout_constraint) {
     NodeManager::Instance().MeasureNode(node, constraint);
     return true;
   };
+  // ffrt-parallelization iteration 3 (point P1): every scroll child is
+  // measured with the same unconstrained content constraint, so sibling
+  // measures are independent and the content bounds fold is a max over
+  // per-child results — measure the children in parallel on harmony, then
+  // accumulate serially. This also empirically validates ArkUI measureNode
+  // on FFRT worker threads (crash/hang would mean the CAPI is UI-thread
+  // bound and the serial loop must stay).
+  std::vector<UIBase*> parallel_children;
+  for (const auto child : children_) {
+    if (child && child->Tag() != "bounce-view" &&
+        child->Tag() != "x-bounce-view" && child->DrawNode()) {
+      parallel_children.push_back(child);
+    }
+  }
+  constexpr size_t kParallelThreshold = 8;
+  bool measured_in_parallel = false;
+  if (parallel_children.size() >= kParallelThreshold &&
+        !NodeManager::Instance().IsCurrentThreadUIThread()) {
+    struct ScrollMeasureCtx {
+      ArkUI_LayoutConstraint* constraint;
+      std::vector<UIBase*>* children;
+    } ctx{constraint, &parallel_children};
+    measured_in_parallel = starlight::ParallelMeasureIndices(
+        parallel_children.size(), kParallelThreshold,
+        [](void* p, size_t idx) {
+          auto* c = static_cast<ScrollMeasureCtx*>(p);
+          NodeManager::Instance().MeasureNode(
+              (*c->children)[idx]->DrawNode(), c->constraint);
+        },
+        &ctx);
+  }
   for (const auto child : children_) {
     // Bounce views share the lifecycle tree with content children, but their
     // size/position are managed by the dedicated bounce branches below.
@@ -238,16 +270,23 @@ void UIScroll::OnMeasure(ArkUI_LayoutConstraint* layout_constraint) {
         (child->Tag() == "bounce-view" || child->Tag() == "x-bounce-view")) {
       continue;
     }
-    if (measure_child(child, "content")) {
-      if (IsHorizontal()) {
-        content_width =
-            std::max(content_width, child->width_ + child->left_ +
-                                        padding_right_ + child->margin_right_);
-      } else {
-        content_height = std::max(content_height, child->height_ + child->top_ +
-                                                      padding_bottom_ +
-                                                      child->margin_bottom_);
+    if (measured_in_parallel) {
+      // Already measured in the parallel pre-pass; accumulate only.
+      if (!child || !child->DrawNode()) {
+        continue;
       }
+    } else if (!measure_child(child, "content")) {
+      continue;
+    }
+    if (IsHorizontal()) {
+      content_width = std::max(content_width, child->width_ + child->left_ +
+                                                    padding_right_ +
+                                                    child->margin_right_);
+    } else {
+      content_height =
+          std::max(content_height, child->height_ + child->top_ +
+                                       padding_bottom_ +
+                                       child->margin_bottom_);
     }
   }
 

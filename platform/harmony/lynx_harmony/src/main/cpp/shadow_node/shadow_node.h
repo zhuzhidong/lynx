@@ -68,10 +68,15 @@ class LYNX_EXPORT ShadowNode : public fml::RefCountedThreadSafeStorage {
   }
   virtual void OnPropsUpdate(const std::string& name,
                              const lepus::Value& value);
+  // ffrt-parallelization iteration 2 (point P1): called after this node is
+  // attached into a text tree so the enclosing TextShadowNode can re-snapshot
+  // its pre-measure. Default no-op.
+  virtual void OnInsertedIntoTextTree() {}
   void AdoptSlNode();
   void SetParent(ShadowNode* parent) {
     parent_sign_ = parent ? parent->Signature() : -1;
   }
+  int32_t GetParentSign() const { return parent_sign_; }
   const std::vector<ShadowNode*>& GetChildren() const { return children_; }
   const std::string& GetIdSelector() const { return id_selector_; }
   float ScaleDensity() const;

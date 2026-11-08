@@ -5,6 +5,7 @@
 #ifndef PLATFORM_HARMONY_LYNX_HARMONY_SRC_MAIN_CPP_SHADOW_NODE_TEXT_SHADOW_NODE_H_
 #define PLATFORM_HARMONY_LYNX_HARMONY_SRC_MAIN_CPP_SHADOW_NODE_TEXT_SHADOW_NODE_H_
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -45,8 +46,28 @@ class TextShadowNode final : public BaseTextShadowNode,
   void OnPropsUpdate(const std::string& name,
                      const lepus::Value& value) override;
 
+  // ffrt-parallelization iteration 2 (point P1): pre-measure pool hooks.
+  // Enqueue a snapshot builder once this node's prop bundle is complete.
+  void UpdateProps(PropBundleHarmony* props) override;
+  // Worker-thread store (before the ffrt::wait barrier); main thread reads
+  // only after JoinPending.
+  void StorePreMeasured(fml::RefPtr<ParagraphHarmony> paragraph,
+                        float layout_max_width, uint32_t generation,
+                        int32_t char_count);
+  // Bump the content generation so a stale pre-measured paragraph is never
+  // consumed (called for descendant text updates as well).
+  void BumpPreMeasureGeneration() {
+    content_generation_.fetch_add(1, std::memory_order_relaxed);
+  }
+  // ffrt-parallelization iteration 2 (point P1): snapshot + enqueue with the
+  // current content; called from this node's prop bundle completion, from
+  // descendant updates/attach (see BaseTextShadowNode). Bumps the generation
+  // so older pre-measured snapshots miss.
+  void MaybeEnqueuePreMeasure();
+
  private:
   void HandleWhiteSpace();
+  fml::RefPtr<ParagraphHarmony> TryConsumePreMeasured(float layout_max_width);
   fml::RefPtr<ParagraphHarmony> HandleTextOverflowAndTruncation(
       fml::RefPtr<ParagraphHarmony> paragraph, float width,
       MeasureMode width_mode, float height, MeasureMode height_mode,
@@ -73,7 +94,9 @@ class TextShadowNode final : public BaseTextShadowNode,
                                            float width, MeasureMode width_mode,
                                            float height,
                                            MeasureMode height_mode,
-                                           bool final_measure);
+                                           bool final_measure,
+                                           fml::RefPtr<ParagraphHarmony>
+                                               pre_built = nullptr);
   LayoutResult GetLayoutResult(ParagraphHarmony* paragraph, float width,
                                MeasureMode width_mode, float height,
                                MeasureMode height_mode);
@@ -85,6 +108,16 @@ class TextShadowNode final : public BaseTextShadowNode,
   InlineTruncationShadowNode* inline_truncation_shadow_node_;
   int32_t origin_char_count_{0};
   int32_t ellipsis_count_{0};
+  // ffrt-parallelization iteration 2 (point P1): pre-measure state.
+  // content_generation_ is main-thread written, worker read at store time.
+  // The pre_measured_* fields are worker written before the ffrt::wait
+  // barrier and main-thread read only after it.
+  std::atomic<uint32_t> content_generation_{0};
+  fml::RefPtr<ParagraphHarmony> pre_measured_paragraph_;
+  float pre_measured_width_{0.f};
+  uint32_t pre_measured_generation_{0};
+  int32_t pre_measured_char_count_{0};
+  bool pre_measured_valid_{false};
   std::string rich_type_;
 };
 

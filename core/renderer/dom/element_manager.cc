@@ -3,6 +3,7 @@
 // LICENSE file in the root directory of this source tree.
 
 #include "core/renderer/dom/element_manager.h"
+#include "base/include/trace/ffrt_profiling.h"
 
 #include <algorithm>
 #include <array>
@@ -58,9 +59,25 @@
 #include "core/value_wrapper/value_impl_lepus.h"
 
 constexpr const static char *kEventDomSizeKey = "dom_size";
+#if defined(OS_HARMONY)
+#include "hitrace/trace.h"
+#endif
+
 namespace lynx {
 namespace tasm {
 namespace {
+
+#if defined(OS_HARMONY)
+// FFRT profiling marker RAII guard (ffrt-parallelization Stage 2).
+// Harmony only: hitrace_ndk.z is linked into liblynx.so via the harmony
+// platform target; core files reach it through the shared NDK sysroot.
+struct FfrtP9HiTraceScope {
+  FfrtP9HiTraceScope() { if (lynx::base::IsFFRTProfilingEnabled()) OH_HiTrace_StartTrace("FFRT_P9_OnPatchFinish"); }
+  ~FfrtP9HiTraceScope() { if (lynx::base::IsFFRTProfilingEnabled()) OH_HiTrace_FinishTrace(); }
+};
+#else
+struct FfrtP9HiTraceScope {};
+#endif
 
 // Rule sets visited while collecting layer trees. The set is small (intrinsic
 // + deps + adopted fragments), so a linear flat set with inline storage avoids
@@ -1834,6 +1851,10 @@ void ElementManager::TickListIfNeeded(
 
 void ElementManager::OnPatchFinish(std::shared_ptr<PipelineOptions> &option,
                                    Element *element) {
+  // FFRT profiling marker (ffrt-parallelization Stage 2): candidate point P9.
+  // Direct OH_HiTrace because the Lynx TRACE_EVENT perfetto runtime switch is
+  // off in production runs; hitrace B/E pairs are always captured.
+  FfrtP9HiTraceScope ffrt_p9_scope;
   if (element == nullptr) {
     element = static_cast<Element *>(root());
   }

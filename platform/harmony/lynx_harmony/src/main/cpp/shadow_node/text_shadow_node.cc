@@ -3,6 +3,7 @@
 // LICENSE file in the root directory of this source tree.
 
 #include "platform/harmony/lynx_harmony/src/main/cpp/shadow_node/text_shadow_node.h"
+#include "base/include/trace/ffrt_profiling.h"
 
 #include <cmath>
 #include <limits>
@@ -18,11 +19,22 @@
 #include "base/trace/native/trace_event.h"
 #include "core/base/harmony/harmony_trace_event_def.h"
 #include "core/style/color.h"
+#include "hitrace/trace.h"
+#include "core/renderer/tasm/config.h"
 #include "platform/harmony/lynx_harmony/src/main/cpp/event/custom_event.h"
 #include "platform/harmony/lynx_harmony/src/main/cpp/lynx_context.h"
 #include "platform/harmony/lynx_harmony/src/main/cpp/shadow_node/inline_placeholder_shadow_node.h"
 #include "platform/harmony/lynx_harmony/src/main/cpp/shadow_node/inline_truncation_shadow_node.h"
 #include "platform/harmony/lynx_harmony/src/main/cpp/shadow_node/shadow_node_owner.h"
+#include "platform/harmony/lynx_harmony/src/main/cpp/shadow_node/text/pre_measure_pool.h"
+
+namespace {
+// FFRT profiling marker RAII guard (ffrt-parallelization Stage 2).
+struct FfrtHiTraceScope {
+  explicit FfrtHiTraceScope(const char* name) { OH_HiTrace_StartTrace(name); }
+  ~FfrtHiTraceScope() { if (lynx::base::IsFFRTProfilingEnabled()) OH_HiTrace_FinishTrace(); }
+};
+}  // namespace
 #include "platform/harmony/lynx_harmony/src/main/cpp/shadow_node/text/text_measure_cache.h"
 #include "platform/harmony/lynx_harmony/src/main/cpp/text/paragraph_builder_harmony.h"
 #include "platform/harmony/lynx_harmony/src/main/cpp/text/paragraph_harmony.h"
@@ -55,6 +67,10 @@ LayoutResult TextShadowNode::Measure(float width, MeasureMode width_mode,
                                      float height, MeasureMode height_mode,
                                      bool final_measure) {
   TRACE_EVENT(LYNX_TRACE_CATEGORY, TEXT_SHADOW_NODE_MEASURE);
+  // FFRT profiling marker (ffrt-parallelization Stage 2): candidate point P1.
+  // Direct OH_HiTrace (not TRACE_EVENT) because the perfetto runtime switch is
+  // off in production runs; hitrace B/E pairs are always captured.
+  FfrtHiTraceScope ffrt_p1_scope{"FFRT_P1_Measure"};
   HandleWhiteSpace();
   MeasureChildrenNode(width, width_mode, height, height_mode, final_measure);
   paragraph_builder_ = std::make_unique<ParagraphBuilderHarmony>(
@@ -65,10 +81,17 @@ LayoutResult TextShadowNode::Measure(float width, MeasureMode width_mode,
       text_props_->text_overflow == starlight::TextOverflowType::kEllipsis) {
     paragraph_style_->SetEllipsis(ELLIPSIS);
   }
+  // ffrt-parallelization iteration 2 (point P1): join pending pre-measure
+  // tasks before the first consumption, then reuse when generation and the
+  // width constraint match. Miss -> the original serial path below.
+  TextPreMeasurePool::Instance().JoinPending();
+  fml::RefPtr<ParagraphHarmony> pre_built =
+      TryConsumePreMeasured(ConstructTextWidthConstraint(width_mode, width));
   {
     TRACE_EVENT(LYNX_TRACE_CATEGORY, TEXT_SHADOW_NODE_LAYOUT);
     paragraph_ = LayoutNode(this, paragraph_builder_.get(), width, width_mode,
-                            height, height_mode, final_measure);
+                            height, height_mode, final_measure,
+                            std::move(pre_built));
   }
   {
     TRACE_EVENT(LYNX_TRACE_CATEGORY,
@@ -81,6 +104,102 @@ LayoutResult TextShadowNode::Measure(float width, MeasureMode width_mode,
                                      paragraph_->GetMeasuredHeight(),
                                      paragraph_->GetMeasuredBaseline()};
   return result;
+}
+
+void TextShadowNode::UpdateProps(PropBundleHarmony* props) {
+  if (lynx::base::IsFFRTProfilingEnabled()) OH_HiTrace_StartTrace("FFRT_P1_UPd");
+  ShadowNode::UpdateProps(props);
+  if (lynx::base::IsFFRTProfilingEnabled()) OH_HiTrace_FinishTrace();
+  // ffrt-parallelization iteration 2 (point P1): the prop bundle for this
+  // node just landed, so its content is complete for this patch round.
+  MaybeEnqueuePreMeasure();
+}
+
+void TextShadowNode::MaybeEnqueuePreMeasure() {
+  // ffrt-parallelization iteration 3: superseded by the in-layout parallel
+  // child measurement (starlight LinearLayoutAlgorithm); the pre-measure
+  // pool is disabled to keep its workers from competing with the layout
+  // parallelism. Kept for reference; see iteration_2/transformed.
+  return;
+  if (!paragraph_style_ || !font_collection_ || !context_) {
+    return;
+  }
+  if (text().empty() && GetChildren().empty()) {
+    return;
+  }
+  // Guess the width constraint for the pre-measure. tasm::Config's pixel
+  // viewport is initialized before template load; the LynxContext::ScreenSize
+  // host may not be attached yet during early patches (that gap left the
+  // first iteration of this pool enqueueing almost nothing). Text blocks
+  // spanning the viewport measure at exactly this width; other constraints
+  // miss and fall back to the serial path.
+  float guess_width = 0.f;
+  if (tasm::Config::pixelRatio() > 0.f && tasm::Config::pixelWidth() > 0) {
+    // pixelWidth is physical px (viewport vp * pixelRatio); the text
+    // constraint unit is measure vp * ScaleDensity.
+    guess_width = static_cast<float>(tasm::Config::pixelWidth()) /
+                  tasm::Config::pixelRatio() * ScaleDensity();
+  } else {
+    float screen[2] = {0.f, 0.f};
+    context_->ScreenSize(screen);
+    if (screen[0] <= 0.f) {
+      return;
+    }
+    guess_width = screen[0] * ScaleDensity();
+  }
+
+  // Snapshot: mirror the serial first pass exactly
+  // (Reset / SetRichType / AppendToParagraph(0, 0)); the FFRT worker then
+  // runs the expensive CreateParagraph + Layout off the critical path.
+  auto snapshot = std::make_unique<ParagraphBuilderHarmony>(
+      paragraph_style_.get(), font_collection_.get());
+  snapshot->Reset();
+  snapshot->SetRichType(rich_type_);
+  AppendToParagraph(*snapshot, 0, 0);
+
+  const uint32_t generation =
+      content_generation_.fetch_add(1, std::memory_order_relaxed) + 1;
+  if (lynx::base::IsFFRTProfilingEnabled()) OH_HiTrace_StartTrace("FFRT_P1_Enq");
+  // (spin removed: markers now gated at runtime)
+  if (lynx::base::IsFFRTProfilingEnabled()) OH_HiTrace_FinishTrace();
+  TextPreMeasurePool::Instance().Enqueue(fml::RefPtr<ShadowNode>(this),
+                                         std::move(snapshot),
+                                         font_collection_, guess_width,
+                                         generation);
+}
+
+void TextShadowNode::StorePreMeasured(
+    fml::RefPtr<ParagraphHarmony> paragraph, float layout_max_width,
+    uint32_t generation, int32_t char_count) {
+  // FFRT worker thread; the main thread reads these only after ffrt::wait
+  // (see TextPreMeasurePool::JoinPending).
+  pre_measured_paragraph_ = std::move(paragraph);
+  pre_measured_width_ = layout_max_width;
+  pre_measured_generation_ = generation;
+  pre_measured_char_count_ = char_count;
+  pre_measured_valid_ = static_cast<bool>(pre_measured_paragraph_);
+}
+
+fml::RefPtr<ParagraphHarmony> TextShadowNode::TryConsumePreMeasured(
+    float layout_max_width) {
+  if (!pre_measured_valid_ ||
+      pre_measured_generation_ != content_generation_.load(std::memory_order_relaxed) ||
+      pre_measured_width_ != layout_max_width) {
+    pre_measured_valid_ = false;
+    return nullptr;
+  }
+  // One-shot consumption: a later Measure of the same node (re-layout with
+  // different constraints, multi-pass) takes the serial path.
+  pre_measured_valid_ = false;
+  if (origin_char_count_ == 0) {
+    origin_char_count_ = pre_measured_char_count_;
+  }
+  // Hit-rate diagnostics for Stage 6 (volatile spin keeps the pair from
+  // being dropped as a zero-length span).
+  if (lynx::base::IsFFRTProfilingEnabled()) OH_HiTrace_StartTrace("FFRT_P1_Hit");
+  // (spin removed: markers now gated at runtime)
+  if (lynx::base::IsFFRTProfilingEnabled()) OH_HiTrace_FinishTrace();
+  return std::move(pre_measured_paragraph_);
 }
 
 /**
@@ -416,21 +535,29 @@ void TextShadowNode::OnPropsUpdate(const std::string& name,
 fml::RefPtr<ParagraphHarmony> TextShadowNode::LayoutNode(
     BaseTextShadowNode* shadow_node, ParagraphBuilderHarmony* builder,
     float width, MeasureMode width_mode, float height, MeasureMode height_mode,
-    bool final_measure) {
+    bool final_measure, fml::RefPtr<ParagraphHarmony> pre_built) {
   // TODO(zhouzhuangzhuang):temporarily remove the text cache because the cache
   // operation takes too much time.
-  fml::RefPtr<ParagraphHarmony> paragraph = nullptr;
-  builder->Reset();
-  builder->SetRichType(rich_type_);
-  shadow_node->AppendToParagraph(*builder, 0, 0);
-  paragraph = builder->CreateParagraph(font_collection_, width);
-  if (origin_char_count_ == 0) {
-    origin_char_count_ = builder->GetCharCount();
-  }
+  // ffrt-parallelization iteration 2 (point P1): when `pre_built` is set, the
+  // expensive paragraph build + typography layout already ran on an FFRT
+  // worker at the same layout_max_width; only the shared post-processing
+  // (max-width handling, result, rebuild check) runs here.
+  const bool used_pre_built = static_cast<bool>(pre_built);
+  fml::RefPtr<ParagraphHarmony> paragraph = std::move(pre_built);
   float layout_max_width = ConstructTextWidthConstraint(width_mode, width);
-  paragraph->Layout(layout_max_width);
+  if (!used_pre_built) {
+    builder->Reset();
+    builder->SetRichType(rich_type_);
+    shadow_node->AppendToParagraph(*builder, 0, 0);
+    paragraph = builder->CreateParagraph(font_collection_, width);
+    if (origin_char_count_ == 0) {
+      origin_char_count_ = builder->GetCharCount();
+    }
+    paragraph->Layout(layout_max_width);
+  }
   HandleMaxWidthMode(shadow_node, paragraph.get(), width * ScaleDensity(),
-                     width_mode, layout_max_width, paragraph->GetLongestLine());
+                     width_mode, layout_max_width,
+                     paragraph->GetLongestLine());
   LayoutResult result =
       GetLayoutResult(paragraph.get(), width, width_mode, height, height_mode);
   paragraph->SetMeasuredSize(result.width_, result.height_, result.baseline_);
@@ -442,8 +569,11 @@ fml::RefPtr<ParagraphHarmony> TextShadowNode::LayoutNode(
     paragraph = ReBuildParagraph(builder, result, layout_max_width,
                                  paragraph->GetTranslateLeftOffset());
   }
-  paragraph->SetText(paragraph_builder_->GetText());
-
+  if (!used_pre_built) {
+    // The pre-measured paragraph already carries its text; the local builder
+    // was never populated on that path.
+    paragraph->SetText(paragraph_builder_->GetText());
+  }
   return paragraph;
 }
 

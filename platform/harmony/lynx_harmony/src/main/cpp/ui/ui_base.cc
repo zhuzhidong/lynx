@@ -4,6 +4,7 @@
 // cspell:ignore positionchange
 
 #include "platform/harmony/lynx_harmony/src/main/cpp/ui/ui_base.h"
+#include "base/include/trace/ffrt_profiling.h"
 
 #include <arkui/native_node.h>
 #include <deviceinfo.h>
@@ -28,6 +29,7 @@
 #include "core/renderer/events/events.h"
 #include "core/renderer/events/gesture.h"
 #include "core/renderer/starlight/style/css_type.h"
+#include "hitrace/trace.h"
 #include "core/renderer/ui_wrapper/common/harmony/prop_bundle_harmony.h"
 #include "core/runtime/lepus/lepus_date.h"
 #include "gfx/public/display_list.h"
@@ -82,6 +84,12 @@ static constexpr float kOffsetRotateAutoWithAngleBase = -1000000.0f;
 static constexpr float kOffsetRotateAutoWithAngleRange = 360.0f;
 
 namespace {
+// FFRT profiling marker RAII guard (ffrt-parallelization Stage 2).
+struct FfrtHiTraceScope {
+  explicit FfrtHiTraceScope(const char* name) { OH_HiTrace_StartTrace(name); }
+  ~FfrtHiTraceScope() { if (lynx::base::IsFFRTProfilingEnabled()) OH_HiTrace_FinishTrace(); }
+};
+
 bool IsFragmentLayerDecorationProperty(const std::string& name) {
   return name == "box-shadow" || name.rfind("background-", 0) == 0 ||
          name.rfind("border-", 0) == 0;
@@ -206,6 +214,8 @@ UIBase::UIBase(LynxContext* context, ArkUI_NodeType type, int sign,
       tag_(tag),
       has_customized_layout_(has_customized_layout),
       observe_invalidation_(observe_invalidation) {
+  // ffrt-parallelization: record the UI thread on first node creation.
+  NodeManager::Instance().RecordUIThread();
   if (type != ARKUI_NODE_UNDEFINED) {
     ArkUI_NodeHandle node = NodeManager::Instance().CreateNode(type);
     InitNode(node);
@@ -319,6 +329,8 @@ void UIBase::EventReceiver(ArkUI_NodeEvent* event) {
   if (OH_ArkUI_NodeEvent_GetTargetId(event) != LYNX_EVENT_ID) {
     return;
   }
+  // FFRT profiling marker (ffrt-parallelization Stage 2): candidate point P6
+  FfrtHiTraceScope ffrt_p6_scope{"FFRT_P6_EventReceiver"};
   auto* ui = reinterpret_cast<UIBase*>(OH_ArkUI_NodeEvent_GetUserData(event));
   if (!ui) {
     return;

@@ -15,6 +15,7 @@
 #include "base/include/float_comparison.h"
 #include "base/include/platform/harmony/harmony_vsync_manager.h"
 #include "base/trace/native/trace_event.h"
+#include "core/renderer/starlight/layout/parallel_measure.h"
 #include "core/animation/basic_animation/basic_animation.h"
 #include "core/base/harmony/harmony_trace_event_def.h"
 #include "core/base/threading/vsync_monitor.h"
@@ -507,8 +508,32 @@ void UIList::OnMeasure(ArkUI_LayoutConstraint* layout_constraint) {
   OH_ArkUI_LayoutConstraint_SetMaxHeight(constraint, max);
   OH_ArkUI_LayoutConstraint_SetMinWidth(constraint, 0);
   OH_ArkUI_LayoutConstraint_SetMaxWidth(constraint, max);
-  for (const auto child : children_) {
-    NodeManager::Instance().MeasureNode(child->DrawNode(), constraint);
+  // ffrt-parallelization iteration 3 (point P1): every list child is measured
+  // with the same unconstrained content constraint, so sibling measures are
+  // independent — run them in parallel on harmony. This also empirically
+  // validates ArkUI measureNode on FFRT worker threads (crash/hang would
+  // mean the CAPI is UI-thread bound and the serial loop must stay).
+  struct ListMeasureCtx {
+    UIList* self;
+    ArkUI_LayoutConstraint* constraint;
+  } ctx{this, constraint};
+  constexpr size_t kParallelThreshold = 8;
+  if (NodeManager::Instance().IsCurrentThreadUIThread()) {
+    // UI thread: CAPI measure bounces back — stay serial.
+    for (const auto child : children_) {
+      NodeManager::Instance().MeasureNode(child->DrawNode(), constraint);
+    }
+  } else if (!starlight::ParallelMeasureIndices(
+          children_.size(), kParallelThreshold,
+          [](void* p, size_t idx) {
+            auto* c = static_cast<ListMeasureCtx*>(p);
+            NodeManager::Instance().MeasureNode(
+                c->self->children_[idx]->DrawNode(), c->constraint);
+          },
+          &ctx)) {
+    for (const auto child : children_) {
+      NodeManager::Instance().MeasureNode(child->DrawNode(), constraint);
+    }
   }
   OH_ArkUI_LayoutConstraint_Dispose(constraint);
   NodeManager::Instance().SetMeasuredSize(

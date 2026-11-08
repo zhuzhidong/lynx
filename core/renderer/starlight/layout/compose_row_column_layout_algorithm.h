@@ -40,6 +40,17 @@ class ComposeRowColumnLayoutAlgorithm final : public LayoutAlgorithm {
   FlexAlignType CrossAlignment(const LayoutObject& child) const;
   float CrossPosition(size_t index) const;
 
+  // ffrt-parallelization iteration 3 (point P1): measure the non-weighted
+  // children in parallel when the main axis is unbounded (native scrolling)
+  // — their (0, infinity, cross_max) constraints are identical and
+  // independent of sibling results. Returns false when the caller must run
+  // the original serial loop.
+  bool MeasureChildrenInParallel(float main_max, float cross_max);
+  static void ParallelMeasureThunk(void* ctx, size_t idx);
+  // Scratch constraint values for the parallel thunk.
+  float parallel_main_max_ = 0;
+  float parallel_cross_max_ = 0;
+
   base::Vector<Child> children_;
   float spacing_ = 0;
   float main_layout_size_ = 0;
