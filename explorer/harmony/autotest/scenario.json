@@ -39,6 +39,18 @@
       "rounds": 1,
       "timeout_s": 300,
       "desc": "商城瀑布流页 + MOST_ON_TASM 引擎异步线程模式"
+    },
+    "article-reader-tasm": {
+      "command": "python3 autotest/page_scroll.py {sn} {report_dir} 'http://127.0.0.1:8790/main.lynx.bundle?thread_mode=most_on_tasm'",
+      "rounds": 1,
+      "timeout_s": 300,
+      "desc": "真实文章阅读页(长文排版,~50 内容块)+ MOST_ON_TASM(Starlight 批量文本测量的真实场景)"
+    },
+    "article-reader": {
+      "command": "python3 autotest/page_scroll.py {sn} {report_dir} 'http://127.0.0.1:8790/main.lynx.bundle'",
+      "rounds": 1,
+      "timeout_s": 300,
+      "desc": "真实文章阅读页 + 默认 ALL_ON_UI(零劣化检查)"
     }
   },
   "lifecycle": {
