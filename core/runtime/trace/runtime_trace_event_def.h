@@ -983,6 +983,8 @@ inline constexpr const char* const FIBER_GET_TAG = "FiberGetTag";
  * @trace_description: Set an attribute on a Fiber element.
  */
 inline constexpr const char* const FIBER_SET_ATTRIBUTE = "FiberSetAttribute";
+inline constexpr const char* const FIBER_BATCH_SET_ATTRIBUTE =
+    "FiberBatchSetAttribute";
 /**
  * @trace_description: Get an attribute value by name from a Fiber element.
  */

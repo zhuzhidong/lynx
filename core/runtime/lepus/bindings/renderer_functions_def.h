@@ -110,6 +110,7 @@
   V(FiberGetElementUniqueID)            \
   V(FiberGetTag)                        \
   V(FiberSetAttribute)                  \
+  V(FiberBatchSetAttribute)            \
   V(FiberGetAttributes)                 \
   V(FiberGetAttributeByName)            \
   V(FiberGetAttributeNames)             \

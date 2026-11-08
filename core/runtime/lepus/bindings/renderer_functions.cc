@@ -4255,6 +4255,69 @@ RENDERER_FUNCTION_CC(FiberGetTag) {
   RETURN(lepus::Value(element->GetTag()));
 }
 
+// ffrt-parallelization (React emit batching, native endpoint): executes N
+// FiberSetAttribute-equivalent ops in one lepus->C++ boundary crossing.
+// The per-call boundary cost dominates ReactLynx element updates (~1us per
+// attribute with <10% native work), so the emit side (npm @lynx-js/react)
+// can aggregate a commit's attribute ops into three parallel arrays and
+// flush them here. Ordering within the batch follows array order, matching
+// the per-op call sequence exactly.
+RENDERER_FUNCTION_CC(FiberBatchSetAttribute) {
+  TRACE_EVENT(LYNX_TRACE_CATEGORY, FIBER_BATCH_SET_ATTRIBUTE);
+  // parameter size = 3, each an Array of equal length N:
+  //   [0] elements (RefCounted), [1] keys (String = custom attribute, or
+  //   Number = ElementBuiltInAttributeEnum), [2] values.
+  CHECK_ARGC_GE(FiberBatchSetAttribute, 3);
+  CONVERT_ARG(arg0, 0);
+  CONVERT_ARG(arg1, 1);
+  CONVERT_ARG(arg2, 2);
+  if (!arg0->IsArray() || !arg1->IsArray() || !arg2->IsArray()) {
+    ElementAPIError("FiberBatchSetAttribute params should all be arrays");
+    RETURN_UNDEFINED();
+  }
+  const auto& elements = arg0->Array();
+  const auto& keys = arg1->Array();
+  const auto& values = arg2->Array();
+  const auto count = elements->size();
+  if (keys->size() != count || values->size() != count) {
+    ElementAPIError("FiberBatchSetAttribute array size mismatch");
+    RETURN_UNDEFINED();
+  }
+  auto self = GET_TASM_POINTER();
+  bool deep_convert =
+      self->page_proxy()->element_manager()->GetEnableParallelElement();
+  uint32_t executed = 0;
+  for (size_t i = 0; i < count; ++i) {
+    const auto& elem_val = elements->get(i);
+    if (!elem_val.IsRefCounted()) {
+      ElementAPIError("FiberBatchSetAttribute element item not RefCounted");
+      continue;
+    }
+    auto element = GetComposeContentOrFiberElementFromValue(elem_val);
+    const auto& key_val = keys->get(i);
+    const auto& val = values->get(i);
+    if (key_val.IsString()) {
+      auto string_type = key_val.StringView();
+      if (string_type.empty()) {
+        ElementAPIError("FiberBatchSetAttribute key item is empty string");
+        continue;
+      }
+      CHECK_ILLEGAL_ATTRIBUTE_CONFIG(element, FiberBatchSetAttribute);
+      element->SetAttribute(key_val.String(), val.ToLepusValue(deep_convert));
+    } else if (key_val.IsNumber()) {
+      auto key = static_cast<ElementBuiltInAttributeEnum>(
+          static_cast<uint32_t>(key_val.Number()));
+      element->SetBuiltinAttribute(key, val);
+    } else {
+      ElementAPIError("FiberBatchSetAttribute key item bad type");
+      continue;
+    }
+    ON_NODE_MODIFIED(element);
+    ++executed;
+  }
+  RETURN(lepus::Value(executed));
+}
+
 RENDERER_FUNCTION_CC(FiberSetAttribute) {
   TRACE_EVENT(LYNX_TRACE_CATEGORY, FIBER_SET_ATTRIBUTE);
   // parameter size = 3
